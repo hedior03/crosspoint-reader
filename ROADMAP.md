@@ -1,5 +1,8 @@
 # CrossPoint Reader Roadmap
 
+> PaperMono fork: see the [personal tools roadmap proposal](docs/papermono-roadmap.md).
+> The roadmap below is inherited from upstream CrossPoint and describes its reader-focused scope.
+
 This roadmap describes how CrossPoint is moving through the tighter scope defined in [SCOPE.md](SCOPE.md). It is
 intentionally phased: Phase 0 closed out the commitments already in flight before locking down to the stricter
 "fill gaps the stock firmware leaves" delineator.
