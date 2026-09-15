@@ -3,6 +3,11 @@
 Project: Open-source e-reader firmware for Xteink X4 (ESP32-C3)
 Mission: Provide a lightweight, high-performance reading experience focused on EPUB rendering on constrained hardware.
 
+## PaperMono tools
+
+Before planning or changing PaperMono tools, read [Building PaperMono tools](docs/papermono-tools-development.md).
+It provides decision-making principles, not a mandatory architecture or additional approval gate.
+
 ## AI Agent Identity and Cognitive Rules
 
 * Role: Senior Embedded Systems Engineer (ESP-IDF/Arduino-ESP32 specialized).

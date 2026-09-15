@@ -2,10 +2,12 @@
 
 Status: **proposal for discussion, not an implementation specification**. Reviewed 2026-09-15.
 Agreed direction: one Tools corner on Home, with Calculator as its first tool. The first calculator increment
-is digits and clear only, scoped in the [calculator input plan](papermono-calculator-input-plan.md).
+covers numeric input and clear, with decimal entry, backspace and sequential arithmetic as a follow-up, scoped in the [calculator input plan](papermono-calculator-input-plan.md).
 Its list submenu and keyboard-based arrangement are implemented; the owner confirmed successful upload and
 basic operation on PaperMono. The full device checklist remains open.
 Later feature ordering remains proposed.
+
+Development approach: [Building PaperMono tools](papermono-tools-development.md).
 
 ## Direction
 
@@ -83,14 +85,14 @@ No on-device transcription or AI runtime is a prerequisite.
 
 ## Next few baby steps
 
-### 1. Calculator input, with its own entry and a way back
+### 1. Basic calculator, with its own entry and a way back
 
-- **Does:** Home → Tools → Calculator; digits append to a readout, and `C` clears it.
-- **Out of scope:** arithmetic, decimals, backspace, history, persistence, and custom key design.
+- **Does:** Home → Tools → Calculator; decimal entry, sequential arithmetic, `C`, `CE`, backspace,
+  and independent key feedback while input continues through screen refreshes.
+- **Out of scope:** expression parsing/precedence, history, persistence, and custom key design.
 - **Design source:** existing CrossPoint/FreeInkUI keyboard keys. Discuss composition before implementation.
 - **PaperMono test:** digit entry, clear, length bound, rapid/held taps, navigation, sleep/wake, and reader return.
 - Detailed scope and source references: [calculator input plan](papermono-calculator-input-plan.md).
-  Add actual calculator operations in a separately scoped increment after this input screen is tried.
 
 ### 2. Single-file voice memo
 
@@ -135,8 +137,8 @@ Host tests/build success do not substitute for PaperMono validation. Capture a r
 
 ## Decisions to make only when needed
 
-- **Now:** validate Tools + calculator input on PaperMono before adding operations. The agreed first increment
-  is implemented locally; later voice/BLE ordering is open.
+- **Now:** finish PaperMono checks for the calculator's independent key expiry and reader return.
+  Basic operation and responsive input were confirmed by the owner; later voice/BLE ordering is open.
 - **Before uploading:** choose the server/auth and define what acknowledgment means. Keep files until confirmed;
   handle the “server saved it but the reply was lost” case without duplicate submissions or silent deletion.
 - **Before background queue work:** define the Tools-area lifetime, explicit stop/pause behavior, reboot recovery,
