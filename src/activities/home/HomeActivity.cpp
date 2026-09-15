@@ -21,9 +21,17 @@
 #include "RecentBooksStore.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#if FREEINK_DEVICE_PAPERMONO
+#include <Memory.h>
+
+#include "activities/tools/ToolsActivity.h"
+#endif
 
 int HomeActivity::getMenuItemCount() const {
   int count = 4;  // File Browser, Recents, File transfer, Settings
+#if FREEINK_DEVICE_PAPERMONO
+  ++count;
+#endif
   if (!recentBooks.empty()) {
     count += recentBooks.size();
   }
@@ -51,6 +59,24 @@ void HomeActivity::loadRecentBooks(int maxBooks) {
 
     recentBooks.push_back(book);
   }
+}
+
+int HomeActivity::getMenuPageSize() const {
+#if FREEINK_DEVICE_PAPERMONO
+  const auto& metrics = UITheme::getInstance().getMetrics();
+  const int height =
+      renderer.getScreenHeight() - (metrics.homeCoverTileHeight + metrics.homeTopPadding + metrics.verticalSpacing +
+                                    metrics.homeMenuTopOffset + metrics.buttonHintsHeight);
+  return std::max(1, height / (GUI.getMenuRowHeight(renderer) + metrics.menuSpacing));
+#else
+  return getMenuItemCount();
+#endif
+}
+
+int HomeActivity::getMenuPageStart() const {
+  const auto& metrics = UITheme::getInstance().getMetrics();
+  const int selected = metrics.homeContinueReadingInMenu ? selectorIndex : selectorIndex - recentBooks.size();
+  return std::max(0, selected) / getMenuPageSize() * getMenuPageSize();
 }
 
 void HomeActivity::loadRecentCovers(int coverHeight) {
@@ -194,6 +220,17 @@ void HomeActivity::loop() {
       case HomeMenuItem::SETTINGS_MENU:
         onSettingsOpen();
         break;
+#if FREEINK_DEVICE_PAPERMONO
+      case HomeMenuItem::TOOLS: {
+        auto tools = makeUniqueNoThrow<ToolsActivity>(renderer, mappedInput);
+        if (!tools) {
+          LOG_ERR("HOME", "OOM: Tools activity");
+          return;
+        }
+        activityManager.replaceActivity(std::move(tools));
+        break;
+      }
+#endif
       default:
         break;
     }
@@ -252,15 +289,17 @@ void HomeActivity::loop() {
   const int menuTop = metrics.homeTopPadding + metrics.homeCoverTileHeight + metrics.homeMenuTopOffset;
   const int renderedMenuCount =
       menuCount - (metrics.homeContinueReadingInMenu ? 0 : static_cast<int>(recentBooks.size()));
+  const int pageStart = getMenuPageStart();
+  const int visibleMenuCount = std::min(getMenuPageSize(), renderedMenuCount - pageStart);
   int menuRow = -1;
   // Row height from the theme, not the metrics table: RoundedRaff draws
   // font-derived rows and the touch grid must match the visuals exactly.
   const int menuRowHeight = GUI.getMenuRowHeight(renderer);
-  const auto menuTouch = mappedInput.rowTouch(menuRow, menuTop, menuRowHeight + metrics.menuSpacing, renderedMenuCount,
+  const auto menuTouch = mappedInput.rowTouch(menuRow, menuTop, menuRowHeight + metrics.menuSpacing, visibleMenuCount,
                                               0, INT32_MAX, menuRowHeight);
   if (menuTouch != MappedInputManager::RowTouch::None) {
     const int touchedIndex =
-        metrics.homeContinueReadingInMenu ? menuRow : menuRow + static_cast<int>(recentBooks.size());
+        pageStart + (metrics.homeContinueReadingInMenu ? menuRow : menuRow + static_cast<int>(recentBooks.size()));
     if (menuTouch == MappedInputManager::RowTouch::Down) {
       if (selectorIndex != touchedIndex) {
         selectorIndex = touchedIndex;
@@ -308,6 +347,12 @@ void HomeActivity::render(RenderLock&&) {
   std::vector<const char*> menuItems = {tr(STR_BROWSE_FILES), tr(STR_MENU_RECENT_BOOKS), tr(STR_FILE_TRANSFER),
                                         tr(STR_SETTINGS_TITLE)};
   std::vector<UIIcon> menuIcons = {Folder, Recent, Transfer, Settings};
+#if FREEINK_DEVICE_PAPERMONO
+  menuItems.reserve(7);
+  menuIcons.reserve(7);
+  menuItems.push_back(tr(STR_TOOLS));
+  menuIcons.push_back(Folder);
+#endif
 
   if (hasOpdsServers) {
     menuItems.insert(menuItems.begin() + 2, tr(STR_OPDS_BROWSER));
@@ -320,15 +365,17 @@ void HomeActivity::render(RenderLock&&) {
     menuIcons.insert(menuIcons.begin(), Book);
   }
 
+  const int pageStart = getMenuPageStart();
   GUI.drawButtonMenu(
       renderer,
       Rect{0, metrics.homeTopPadding + metrics.homeCoverTileHeight + metrics.homeMenuTopOffset, pageWidth,
            pageHeight - (metrics.headerHeight + metrics.homeTopPadding + metrics.verticalSpacing +
                          metrics.homeMenuTopOffset + metrics.buttonHintsHeight)},
-      static_cast<int>(menuItems.size()),
-      metrics.homeContinueReadingInMenu ? selectorIndex : selectorIndex - recentBooks.size(),
-      [&menuItems](int index) { return std::string(menuItems[index]); },
-      [&menuIcons](int index) { return menuIcons[index]; });
+      std::min(getMenuPageSize(), static_cast<int>(menuItems.size()) - pageStart),
+      (metrics.homeContinueReadingInMenu ? selectorIndex : selectorIndex - static_cast<int>(recentBooks.size())) -
+          pageStart,
+      [&menuItems, pageStart](int index) { return std::string(menuItems[index + pageStart]); },
+      [&menuIcons, pageStart](int index) { return menuIcons[index + pageStart]; });
 
   const auto labels = mappedInput.mapLabels(recentBooks.empty() ? "" : tr(STR_RESUME), tr(STR_SELECT), tr(STR_DIR_UP),
                                             tr(STR_DIR_DOWN));

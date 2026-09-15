@@ -1,4 +1,6 @@
 #pragma once
+#include <BoardConfig.h>
+
 #include <functional>
 #include <vector>
 
@@ -43,6 +45,10 @@ class HomeActivity final : public Activity {
     if (item == HomeMenuItem::FILE_TRANSFER) return i;
     ++i;
     if (item == HomeMenuItem::SETTINGS_MENU) return i;
+#if FREEINK_DEVICE_PAPERMONO
+    ++i;
+    if (item == HomeMenuItem::TOOLS) return i;
+#endif
     return 0;
   }
 
@@ -53,7 +59,10 @@ class HomeActivity final : public Activity {
     if (idx == i++) return HomeMenuItem::RECENTS;
     if (hasOpdsUrl && idx == i++) return HomeMenuItem::OPDS_BROWSER;
     if (idx == i++) return HomeMenuItem::FILE_TRANSFER;
-    if (idx == i) return HomeMenuItem::SETTINGS_MENU;
+    if (idx == i++) return HomeMenuItem::SETTINGS_MENU;
+#if FREEINK_DEVICE_PAPERMONO
+    if (idx == i) return HomeMenuItem::TOOLS;
+#endif
     return HomeMenuItem::NONE;
   }
   void onSelectBook(const std::string& path);
@@ -64,6 +73,8 @@ class HomeActivity final : public Activity {
   void onOpdsBrowserOpen();
 
   int getMenuItemCount() const;
+  int getMenuPageSize() const;
+  int getMenuPageStart() const;
   bool storeCoverBuffer();    // Store frame buffer for cover image
   bool restoreCoverBuffer();  // Restore frame buffer from stored cover
   void freeCoverBuffer();     // Free the stored cover buffer
