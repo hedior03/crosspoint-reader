@@ -3,7 +3,7 @@
 #include <BoardConfig.h>
 
 #if FREEINK_DEVICE_PAPERMONO
-#include "CalculatorInput.h"
+#include "CalculatorFeedback.h"
 #include "activities/Activity.h"
 #include "components/UiAppHost.h"
 
@@ -18,13 +18,18 @@ class CalculatorActivity final : public Activity, private UiAppHost {
  private:
   static constexpr freeink::ui::ActionId ACTION_KEY = 1;
   static constexpr int16_t CLEAR = 10;
+  static constexpr int16_t DECIMAL = 11;
   void buildScreen(UiScreen& screen);
   void activateKey(int16_t value);
 
-  CalculatorInput input;
-  freeink::ui::KeyboardKey keys[11]{};
-  freeink::ui::KeyboardRow rows[4]{};
-  freeink::ui::KeyboardLayout layout{rows, 4};
+  void publishFeedback(int16_t pressed = -1);
+  CalculatorState calculator;
+  CalculatorFeedback feedback;
+  CalculatorFeedback::Frame displayed;
+  portMUX_TYPE feedbackMux = portMUX_INITIALIZER_UNLOCKED;
+  freeink::ui::KeyboardKey keys[19]{};
+  freeink::ui::KeyboardRow rows[5]{};
+  freeink::ui::KeyboardLayout layout{rows, 5};
   freeink::ui::KeyboardNavigator navigator;
   freeink::ui::KeyboardProps keyboard;
 };
