@@ -96,6 +96,8 @@ No on-device transcription or AI runtime is a prerequisite.
 
 ### 2. Single-file voice memo
 
+Detailed baby steps and hardware findings: [voice memo plan](papermono-voice-memo-plan.md).
+
 - **Does:** start/stop capture to a new WAV on SD, show recording/saved/error state and the filename.
   Default candidate: 16 kHz, 16-bit mono; 32,000 bytes/second, about 1.92 MB/minute before the small header.
   Stream through a bounded reusable buffer; do not hold the recording in RAM. Keep recordings outside disposable
