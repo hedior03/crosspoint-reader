@@ -6,15 +6,10 @@
 #include "../../src/activities/tools/VoiceMemoGain.h"
 #include "../../src/activities/tools/VoiceMemoWav.h"
 int main() {
-  assert(voiceMemoApplyGain(0) == 0);
-  assert(voiceMemoApplyGain(1000) == 2000);
-  assert(voiceMemoApplyGain(-1000) == -2000);
-  assert(voiceMemoApplyGain(16383) == 32766);
-  assert(voiceMemoApplyGain(16384) == 32767);
-  assert(voiceMemoApplyGain(-16384) == -32768);
-  assert(voiceMemoApplyGain(-16385) == -32768);
-  assert(voiceMemoApplyGain(32767) == 32767);
-  assert(voiceMemoApplyGain(-32768) == -32768);
+  for (int sample : {0, 1, -1, 1000, -1000, 16383, 16384, -16384, -16385, 32767, -32768}) {
+    const int expected = std::clamp(sample * VoiceMemoConfig::GAIN, -32768, 32767);
+    assert(voiceMemoApplyGain(static_cast<int16_t>(sample)) == expected);
+  }
   const auto empty = voiceMemoWavHeader(0);
   assert(empty[4] == 36 && empty[40] == 0);
   for (uint32_t sampleCount : {0u, 1u, 16000u, 123456u, 4800000u}) {

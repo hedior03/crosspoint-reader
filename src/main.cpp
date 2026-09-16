@@ -9,6 +9,9 @@
 #include <HalFrontlight.h>
 #include <HalGPIO.h>
 #include <HalMemory.h>
+#if FREEINK_DEVICE_PAPERMONO
+#include <HalMicrophone.h>
+#endif
 #include <HalPowerManager.h>
 #include <HalStorage.h>
 #include <HalSystem.h>
@@ -751,6 +754,12 @@ void loop() {
 
   const unsigned long activityStartTime = millis();
   activityManager.loop();
+#if FREEINK_DEVICE_PAPERMONO
+  if (HalMicrophone::indicatorNeedsUpdate()) {
+    RenderLock lock;
+    HalMicrophone::updateIndicator();
+  }
+#endif
   const unsigned long activityDuration = millis() - activityStartTime;
 
   const unsigned long loopDuration = millis() - loopStartTime;

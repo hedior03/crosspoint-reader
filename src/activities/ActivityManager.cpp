@@ -333,7 +333,11 @@ void ActivityManager::popActivity() {
   pendingAction = PendingAction::Pop;
 }
 
-bool ActivityManager::preventAutoSleep() const { return currentActivity && currentActivity->preventAutoSleep(); }
+bool ActivityManager::preventAutoSleep() const {
+  return (currentActivity && currentActivity->preventAutoSleep()) ||
+         std::any_of(stackActivities.begin(), stackActivities.end(),
+                     [](const auto& activity) { return activity->preventAutoSleep(); });
+}
 
 bool ActivityManager::requiresExclusiveStorageLoop() const {
   return currentActivity && currentActivity->requiresExclusiveStorageLoop();

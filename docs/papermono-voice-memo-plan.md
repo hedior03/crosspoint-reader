@@ -1,14 +1,15 @@
 # PaperMono voice memo: baby-step plan
 
 Status: ten-second hardware capture confirmed by the owner; sample WAV format and levels checked.
-Record/Stop with a five-minute cap is implemented locally; its device checklist remains open.
+Continuous session recording and pause/resume are implemented locally; their device checklist remains open.
 Follow [Building PaperMono tools](papermono-tools-development.md). Parent: [roadmap](papermono-roadmap.md).
 
-## First useful outcome
+## Original single-file milestone
 
 Tools → Voice memo → Record → Stop → one playable local WAV file. Copy it using existing File Transfer
 and listen on a computer. Start with short recordings; establish reliability before increasing duration.
-No upload, transcription, playback on-device, pause, chunking, or recording while reading in this increment.
+That initial milestone excluded upload, transcription, playback, pause, chunking and recording while reading.
+The current continuous-recording implementation is described below.
 
 ## Hardware and reuse evidence
 
@@ -58,7 +59,7 @@ The official example samples periodically for an amplitude display; it is not a 
 No reusable voice-recorder implementation was identified in the inspected CrossPlay source; keep its upload
 patterns for the later server milestone.
 
-## Small increments
+## Initial milestones (single-file baseline)
 
 ### 0. Microphone bring-up and release — recommended starting point
 
@@ -107,7 +108,7 @@ explicit power-button sleep performs orderly cleanup, errors preserve partial fi
 again afterward. Do not enable USB Drive while a recorder owns an SD handle. Record several minutes on
 battery and USB, repeat sessions, and return to a book without changing its reading position.
 
-## Minimum internal structure for those increments
+## Structure used for the single-file baseline
 
 - **Activity:** owns the recorder lifetime, handles commands, renders a small latest-status snapshot. It never
   captures or writes audio under the rendering lock. No generic service registry or event bus.
@@ -136,71 +137,152 @@ queue with server acknowledgment and retry, followed by transcription, optional 
 annotation, AI cleanup, agentic processing and a personal transcription dictionary. Choose server/API,
 formats and queue architecture when those increments start. No such framework is needed for local WAVs.
 
-## Next increment: continuous meeting recording
+## Continuous meeting recording and pause/resume
 
-The owner wants capture to continue uninterrupted across file transitions. The current five-minute
-Record/Stop recorder is the baseline; continuous chunks are not implemented yet.
+Status: implemented locally as one increment at the owner's request. One active session; leaving Voice Memo
+stops and saves. Pause/resume is included. Background uploads and reopening old sessions remain deferred.
 
-Proposed smallest structure: a capture task drains the microphone into a bounded, reusable PCM buffer;
-a separate SD writer consumes samples in order and owns chunk headers, writes, close and rename.
-Keep the microphone running across boundaries. The writer can finalize one chunk while capture fills
-the buffer, then continue into the next numbered chunk in the same session. Split at exact sample counts.
-Do not spawn a task per chunk or introduce a general job framework.
+### Observable scope
 
-WAV header calculation is a few integer operations; SD latency is the uncertainty. Retain locally playable
-WAV chunks and the existing `.part` until successfully finalized policy. Deferring headers to the server
-would not eliminate write/open stalls and is not presently needed. Previously completed chunks must remain
-usable if a later chunk fails. Recovery of the active partial file remains a separate increment.
+- Record creates a unique `/recordings/session-NNNN/` directory; numbered `chunk-NNNN.part` files become
+  `.wav` only after successful finalization. Existing flat memo files remain untouched.
+- Five minutes becomes a chunk duration, not a session cap. Continue until Stop, exit, or an error/resource
+  limit. Never overwrite an existing session/chunk; detect identifier and counter exhaustion explicitly.
+- Keep existing themed Record/Stop controls; show recording state, current chunk and session path.
+- Stop ends capture, drains accepted buffered PCM in order, finalizes the last nonempty chunk, and releases
+  tasks/buffers/mic power. Avoid an extra empty chunk when Stop lands exactly at a boundary.
+- On overflow or storage failure, preserve completed chunks and the active partial file, report incomplete,
+  and release resources safely. Drain buffered audio only while storage remains writable. Forced power loss
+  can lose RAM/buffered writes; automatic partial recovery is deferred.
 
-Size the buffer from measured worst-case write/finalization/open latency with margin, and verify memory
-placement and allocation failure handling on PaperMono. At 32,000 bytes/second, 64,000 bytes covers two
-seconds; this is a sizing example, not a selected allocation. No finite buffer guarantees lossless capture
-through arbitrary SD stalls. Detect exhaustion, preserve stored audio, and report an incomplete session;
-never silently drop or overwrite unread samples. Stop must drain accepted buffered samples before finalizing.
+### Implementation order and source evidence
 
-Hardware gate: record a timed source for 30–60 minutes, check every boundary for missing/duplicated samples,
-exercise display refresh and Stop near rollover, and test full-card/write failures. Log buffer high-water,
-SD transition latency, overflow, heap and task stack. Retain stop-on-exit and existing UI components.
-Uploads, recording while reading, and a new file browser are out of scope.
+1. Centralize sample rate, digital gain, chunk seconds, block samples and buffer blocks in one small recorder
+   config header. Keep mono signed 16-bit PCM fixed. `VoiceMemoWav.h:22–25` and `HalMicrophone.cpp:18` currently
+   duplicate format values; pass the selected rate into the HAL and derive WAV rates/lengths from it. Validate
+   bounds at compile time and driver startup. Use wide session counters and bounded per-chunk byte counts.
+2. Replace flat naming (`VoiceMemoActivity.cpp:14–25`) with unique session directories and numbered chunks.
+   Keep filename generation bounded and all file access through HalStorage.
+3. Split the existing read/write loop (`VoiceMemoActivity.cpp:80–129`) into capture and writer tasks owned by
+   the activity. Use a fixed pool of PCM blocks and FreeRTOS queues of block indices: free blocks to capture,
+   filled blocks to writer, recycled only after writing. Allocate once per session with checked failure cleanup.
+   Capture never waits on an SD lock; writer alone owns files. No task per chunk or generic job framework.
+4. Keep I2S enabled across chunk transitions. Writer splits blocks at exact sample boundaries, finalizes the
+   old chunk and opens the next while capture continues into free blocks. WAV header arithmetic is cheap;
+   file-system delay is the reason for buffering. Do not defer normal WAV finalization to a server.
+5. Make shutdown explicit: publish capture completion, drain all queued blocks, finish the writer, then delete
+   tasks and free their resources. Stop/error must remain observable even when data queues are full. No task
+   may wait for a render lock during exit; no forced task deletion while it owns files or storage locks.
+6. Add compact timing and buffer diagnostics, host checks, then build PaperMono and run the hardware gate below.
 
-After this: upload one closed WAV with server acknowledgment, then add a durable one-at-a-time upload
-queue within Tools. Start uploads while recording is idle; concurrent upload/capture needs its own SD/radio
-contention test. Endpoint/authentication and retry/duplicate semantics are decisions for that increment.
+### Initial constants and measurement
 
-## Current Record/Stop workflow
+Proposed trial defaults: 16,000 Hz, mono 16-bit, gain 2x, 300-second chunks, 1,024 samples per block,
+32 blocks (65,536 bytes / 2.048 seconds). These are experimental starting values, not a losslessness guarantee.
+Justify the pool allocation as protection against measured SD stalls; verify internal RAM versus PSRAM placement
+against the actual read/copy path, leaving DMA buffers in driver-compatible memory. Record free internal heap,
+PSRAM use and task stack headroom; allocation failure must leave recording idle and hardware released.
 
-Tools → Voice memo opens idle. Record creates a new `/recordings/memo-NNNN.part` and starts capture;
-Stop saves a WAV of the captured duration. Repeated Record presses while busy are ignored. The physical
-Confirm button starts while idle and stops while busy. Back or power-button sleep stops and finalizes
-before leaving. An immediate stop may produce a valid empty WAV. The five-minute cap stops and saves
-automatically. Capture/write errors retain a `.part`; Saved requires successful finalization and rename.
-Forced physical power loss can still leave incomplete data.
+Time writer batches with a monotonic timer, including the complete file transition (header/flush/close/rename/open)
+when a batch crosses a boundary.
+Track maximum and a small fixed latency histogram, queue high-water, sample counts, DMA overflow and clipping.
+Aggregate counters in memory; emit a brief periodic/stop summary outside the capture hot path. Existing
+`VoiceMemoActivity.cpp:111–133` measures only maximum write time and reports it at completion.
 
-The existing themed screen supplies separate Record/Stop buttons, progress, status and file path. Stop
-sets an atomic request without acquiring the render lock; capture polls it between bounded reads/writes.
-The task closes its file and stops capture before acknowledging cleanup. The input task then powers off
-the mic and releases the worker. Startup resets session state so a new recording cannot inherit a stop/error.
-One 4 KB worker stack, an activity-owned 2 KB sample buffer and SDK I2S DMA buffers remain; no upload,
-playback, filtering, second capture task or new board initialization has been added.
+Required throughput = sample rate × channels × bytes/sample. Buffer time = usable queued bytes / byte rate,
+with allowance for blocks currently held by capture/writer. The pool must cover stalls with margin; sustained
+writer throughput must also exceed capture throughput. Never silently overwrite unread blocks on exhaustion.
+Change one variable at a time. Gain affects amplitude/clipping, not byte rate; sample rate affects bandwidth
+and bytes/sec; chunk duration affects rollover frequency and file size; block size affects call overhead and
+stop granularity; pool size affects stall tolerance. Shorten chunks temporarily to stress transitions quickly.
+Do not reduce audio quality as a substitute for measuring storage or fixing lost-sample bugs.
 
-### Verification
+### Verification gate
 
-- Host: WAV headers cover empty, short, arbitrary and five-minute lengths; Python checks actual PCM size.
-- Device: Record, speak, Stop after a few seconds; copy the WAV with File Transfer and run
-  `.venv/bin/python test/voice_memo/check_wav.py /path/to/memo-NNNN.wav`, then listen.
-- Rapid Record/Stop taps must create only one session until Saving finishes. Repeat sessions without leaving.
-- Stop during a display refresh, Back during capture, and explicit sleep must save and release the mic.
-  Idle auto-sleep must work again afterward. Confirm reader/touch/frontlight operation.
-- Record to the five-minute cap, check duration/continuity, and test a full/missing card. Keep `.part` and
-  `MIC`/`MEMO` serial messages if a run fails. These new hardware checks have not been completed.
+Host: known numbered samples survive chunk splitting exactly once and in order; test partially filled blocks,
+exact-boundary Stop, and injected open/write/finalize failures. Verify WAV lengths and unique paths. Real queue
+exhaustion, driver short reads and shutdown/drain scheduling remain hardware checks, not covered by the storage stub.
 
-The reproducible `patch_freeink_microphone.py` SDK patch selects PaperMono's I2S0/right slot, preserves partial
-reads on timeout using millisecond units, and exposes RX queue overflow through an ISR-safe internal-RAM flag.
-Overflow marks the recording incomplete. `HalMicrophone` owns the existing expander mic rail and checks power
-transitions. Keep the captured evidence before changing buffer sizes or adding a second worker.
+PaperMono: capture a timed source for 30–60 minutes, inspect every boundary for gaps/duplicates, exercise
+screen refresh and repeated Stop near rollover. Test full/missing card, repeated sessions, exit, explicit sleep,
+and reader return. Compare telemetry with USB monitor attached and detached; also test battery operation.
+Log transition latency, buffer high-water, overflow and heap/stack. Driver sample counts alone cannot prove
+that the physical signal had no gaps; include listening/timed-source checks. Repeat with shorter chunks.
 
-The first ten-second test worked on device. Its WAV had the expected 160,000 mono samples at 16 kHz,
-no clipped samples and a -6 dBFS peak. Default recording gain is now 2x (about +6 dB), applied in place with signed 16-bit saturation.
-Peak/DC/clipping diagnostics describe the amplified samples. Gain also increases air noise; filtering
-and automatic gain control remain deferred. Verify speech and loud/clap samples before increasing gain further;
-these observations do not establish long-duration or failure-path reliability.
+### Pause/resume and metadata
+
+Pause drains and finalizes the current chunk, releases microphone capture, and keeps the session and buffer
+pool selected. Resume opens the next chunk in the same directory; Stop or leaving the screen ends the session.
+Reopening old sessions or resuming after reboot is out of scope. The gap duration measures microphone-stop to
+microphone-restart using the monotonic microsecond clock, including drain time; it is not a wall-clock timestamp.
+
+`session.jsonl` is an append-only journal, one small JSON object per line. Its version-1 start event declares
+sample rate, mono 16-bit format and gain. Completed chunk events record chunk number, sample count and cumulative
+end sample. Recording/resume/pause/stop/incomplete events record the written sample offset; resume also records
+`gap_ms`. Fixed internal fields are formatted into bounded buffers; no JSON parser or repeated document rewrite
+is needed. Every entry is closed with a checked result. Audio publication precedes its chunk entry: if journal
+writing fails, the WAV is retained and the session reports failure. An interrupted trailing entry or absence of
+`stop` means the session needs inspection, not that its completed WAVs should be deleted. There is no automatic
+repair, resume-after-reboot or guarantee against filesystem damage during power loss.
+
+After local recording is reliable: one streamed WAV upload with acknowledgment, then a durable one-at-a-time queue
+within Tools. Separate recording metadata from pending/retry/acknowledged upload state. Decide whether the server
+needs a session manifest when its API is scoped. No server, authentication or upload framework in this increment.
+
+## Current workflow and verification
+
+Tools → Voice memo has four existing themed buttons: Record, Pause, Resume, Stop. Invalid actions in the current
+state are ignored, so old screen hit targets cannot toggle a new session. Confirm starts, resumes a paused session,
+or stops an active capture. Stop overrides a pending Pause. Back and explicit sleep drain/save before leaving;
+idle sleep is prevented during capture/finalization and allowed while paused (ending that session on exit).
+The frontlight overlay temporarily covers the tool without ending it; the activity manager includes covered
+activities in its sleep check, so recording remains awake. Test opening/closing that overlay during capture.
+The UI shows Recording…, chunk number and the session directory. It refreshes on state/chunk changes, not every
+second; there is no live stopwatch or five-minute session cap. A red indicator pulses for approximately 150 ms
+every two seconds while capturing. The microphone HAL owns the PMIC red LED bit, polled by the existing main loop
+under RenderLock, including while the frontlight overlay is visible. No new task or capture-thread I2C traffic.
+Pause, Stop, capture failure and exit disable the indicator. Blink timing can stretch during a display refresh;
+this is visual feedback, not a recording clock. Battery savings have not been measured.
+
+The activity owns two workers, each with a 4 KB stack. A single checked pool contains 32 blocks of 1,024 int16
+samples plus per-block counts; two bounded FreeRTOS queues transfer block indices without copying audio. The pool
+uses the normal nothrow allocator (placement reported in logs), avoiding large task-stack allocations; ESP-IDF
+retains ownership of its DMA buffers. The pool and queues are reused while paused and released on Stop/error/exit.
+The capture worker has priority 2, writer priority 1, both unpinned. Capture does no SD access or serial logging.
+The writer owns all audio files; main-task metadata/power cleanup happens only after workers acknowledge completion.
+
+Config: `src/activities/tools/VoiceMemoConfig.h`. Default 16 kHz mono16, 2x saturating gain, five-minute chunks,
+64 KiB PCM pool. Gain amplifies air/rubbing noise too. Filtering, AGC, compression and uploads are deferred.
+
+Commands from the repository:
+
+```sh
+bash test/voice_memo/run_host_tests.sh
+.venv/bin/pio run -e papermono
+.venv/bin/pio device monitor --port /dev/cu.usbmodem101 --baud 115200
+.venv/bin/python test/voice_memo/check_wav.py /path/to/copied/session-000001
+```
+
+Host checks compile the real session writer with a fault-injecting storage substitute and address/undefined-behavior
+sanitizers. They check sample order across nonaligned boundaries, WAV lengths, empty/exact-boundary Stop, session
+uniqueness, pause/resume events, and open/write/header/close/rename/journal failures. The Python checker verifies a
+copied session's files against its journal. These checks do not simulate FreeRTOS scheduling, real SD stalls or I2S.
+
+On PaperMono, first record past five minutes, Pause/Resume, then Stop and copy the entire session. Check it with
+the script and listen across boundaries. Then run the 30–60 minute timed-source test and failure/exit tests above.
+Verify the screen stays still between chunk/state changes, and the red LED pulses during capture and turns off
+on Pause/Stop/error/exit, including after using the frontlight overlay.
+For a faster rollover stress test temporarily lower CHUNK_SECONDS, rebuild, then restore the normal value.
+Expected: zero overflow, no unexplained sample gaps/duplicates, headroom in buffer/stack/internal heap, and no
+resource loss after repeated sessions. Also try Stop while draining a Pause, rapid invalid taps, and Stop exactly
+near a boundary. Forced power loss may leave partial audio and an unfinished journal; earlier WAVs remain valuable.
+
+Serial diagnostics: allocation placement/internal heap/PSRAM; each opening/rollover's complete batch duration and
+queued blocks; maximum batch duration and five latency buckets (<1ms, <10ms, <100ms, <1s, >=1s), final close duration,
+worker stack headroom, capture peak/clipping and buffer high-water. Batch timing includes any header, close, rename,
+journal and next-file open needed by that batch. Durations are microseconds. No per-sample logging. Buffer-full,
+DMA/read, setup and storage failures stop with an incomplete result, never a silent overwrite of queued samples.
+
+Build and host checks are local evidence only. Long-session continuity, pause/resume timing, memory placement and
+full-card behavior still require device validation. The earlier ten-second hardware recording worked; that alone
+does not establish this new pipeline's reliability.

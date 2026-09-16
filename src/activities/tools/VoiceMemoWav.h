@@ -3,6 +3,8 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "VoiceMemoConfig.h"
+
 inline std::array<uint8_t, 44> voiceMemoWavHeader(uint32_t dataBytes) {
   std::array<uint8_t, 44> header{};
   const auto put = [&](size_t offset, uint32_t value, size_t bytes) {
@@ -19,8 +21,8 @@ inline std::array<uint8_t, 44> voiceMemoWavHeader(uint32_t dataBytes) {
   put(16, 16, 4);
   put(20, 1, 2);
   put(22, 1, 2);
-  put(24, 16000, 4);
-  put(28, 32000, 4);
+  put(24, VoiceMemoConfig::SAMPLE_RATE, 4);
+  put(28, VoiceMemoConfig::SAMPLE_RATE * VoiceMemoConfig::BYTES_PER_SAMPLE, 4);
   put(32, 2, 2);
   put(34, 16, 2);
   put(40, dataBytes, 4);

@@ -1,10 +1,10 @@
 # PaperMono personal tools roadmap
 
 Status: **proposal for discussion, not an implementation specification**. Reviewed 2026-09-15.
-Agreed direction: one Tools corner on Home, with Calculator as its first tool. The first calculator increment
-covers numeric input and clear, with decimal entry, backspace and sequential arithmetic as a follow-up, scoped in the [calculator input plan](papermono-calculator-input-plan.md).
-Its list submenu and keyboard-based arrangement are implemented; the owner confirmed successful upload and
-basic operation on PaperMono. The full device checklist remains open.
+Agreed direction: one Tools corner on Home. Calculator is accepted as complete for now, including arithmetic,
+editing and independent key feedback. Voice memo now has a local implementation of session directories,
+continuous buffered chunks and pause/resume; the new long-recording hardware checks remain open. See the
+[voice memo plan](papermono-voice-memo-plan.md) for current scope and tests.
 Later feature ordering remains proposed.
 
 Development approach: [Building PaperMono tools](papermono-tools-development.md).
@@ -139,8 +139,7 @@ Host tests/build success do not substitute for PaperMono validation. Capture a r
 
 ## Decisions to make only when needed
 
-- **Now:** finish PaperMono checks for the calculator's independent key expiry and reader return.
-  Basic operation and responsive input were confirmed by the owner; later voice/BLE ordering is open.
+- **Now:** validate continuous voice recording and pause/resume on PaperMono; calculator is accepted for now.
 - **Before uploading:** choose the server/auth and define what acknowledgment means. Keep files until confirmed;
   handle the “server saved it but the reply was lost” case without duplicate submissions or silent deletion.
 - **Before background queue work:** define the Tools-area lifetime, explicit stop/pause behavior, reboot recovery,
