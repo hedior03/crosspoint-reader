@@ -45,6 +45,7 @@ void VoiceMemoActivity::releaseBuffers() {
   if (filledBlocks) vQueueDelete(filledBlocks);
   freeBlocks = filledBlocks = nullptr;
   blocks.reset();
+  session.releaseEncoder();
 }
 
 void VoiceMemoActivity::startRecording(bool resume) {
@@ -86,8 +87,8 @@ void VoiceMemoActivity::startRecording(bool resume) {
       resumeGapMs = resume ? (esp_timer_get_time() - stoppedAt) / 1000 : 0;
       captureDone = writerDone = false;
       // Writer may block on SD; capture has higher priority and blocks only on audio/free buffers.
-      if (xTaskCreate([](void* p) { static_cast<VoiceMemoActivity*>(p)->write(); }, "MemoWrite", 4096, this, 1,
-                      &writerTask) != pdPASS) {
+      if (xTaskCreate([](void* p) { static_cast<VoiceMemoActivity*>(p)->write(); }, "MemoWrite",
+                      cfg::WRITER_STACK_BYTES, this, 1, &writerTask) != pdPASS) {
         writerDone = true;
         captureDone = true;
         fail(Error::Setup);

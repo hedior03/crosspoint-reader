@@ -1,0 +1,10 @@
+{
+  "name": "AdpcmXq",
+  "version": "0.5.0",
+  "build": {
+    "srcFilter": [
+      "+<adpcm-lib.c>",
+      "+<adpcm-dns.c>"
+    ]
+  }
+}

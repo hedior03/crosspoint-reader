@@ -150,7 +150,8 @@ stops and saves. Pause/resume is included. Background uploads and reopening old 
   limit. Never overwrite an existing session/chunk; detect identifier and counter exhaustion explicitly.
 - Keep existing themed Record/Stop controls; show recording state, current chunk and session path.
 - Stop ends capture, drains accepted buffered PCM in order, finalizes the last nonempty chunk, and releases
-  tasks/buffers/mic power. Avoid an extra empty chunk when Stop lands exactly at a boundary.
+  tasks/buffers/mic power. ADPCM retains complete codec blocks and journals its incomplete tail as described
+  below; PCM retains every sample. Avoid an extra empty chunk when Stop lands exactly at a boundary.
 - On overflow or storage failure, preserve completed chunks and the active partial file, report incomplete,
   and release resources safely. Drain buffered audio only while storage remains writable. Forced power loss
   can lose RAM/buffered writes; automatic partial recovery is deferred.
@@ -244,15 +245,16 @@ under RenderLock, including while the frontlight overlay is visible. No new task
 Pause, Stop, capture failure and exit disable the indicator. Blink timing can stretch during a display refresh;
 this is visual feedback, not a recording clock. Battery savings have not been measured.
 
-The activity owns two workers, each with a 4 KB stack. A single checked pool contains 32 blocks of 1,024 int16
+The activity owns two workers: capture has a 4 KiB stack; writer has 6 KiB for ADPCM or 4 KiB for PCM. A single checked pool contains 32 blocks of 1,024 int16
 samples plus per-block counts; two bounded FreeRTOS queues transfer block indices without copying audio. The pool
 uses the normal nothrow allocator (placement reported in logs), avoiding large task-stack allocations; ESP-IDF
 retains ownership of its DMA buffers. The pool and queues are reused while paused and released on Stop/error/exit.
 The capture worker has priority 2, writer priority 1, both unpinned. Capture does no SD access or serial logging.
 The writer owns all audio files; main-task metadata/power cleanup happens only after workers acknowledge completion.
 
-Config: `src/activities/tools/VoiceMemoConfig.h`. Default 16 kHz mono16, 2x saturating gain, five-minute chunks,
-64 KiB PCM pool. Gain amplifies air/rubbing noise too. Filtering, AGC, compression and uploads are deferred.
+Config: `src/activities/tools/VoiceMemoConfig.h`. Default 16 kHz mono16, 2x saturating gain, approximately five-minute ADPCM chunks,
+64 KiB PCM pool. Storage defaults to IMA ADPCM; PCM remains a compile-time baseline (see below).
+Gain amplifies air/rubbing noise too. Filtering, AGC and uploads are deferred.
 
 Commands from the repository:
 
@@ -286,3 +288,114 @@ DMA/read, setup and storage failures stop with an incomplete result, never a sil
 Build and host checks are local evidence only. Long-session continuity, pause/resume timing, memory placement and
 full-card behavior still require device validation. The earlier ten-second hardware recording worked; that alone
 does not establish this new pipeline's reliability.
+
+## IMA ADPCM recording increment
+
+Default storage is mono four-bit Microsoft IMA ADPCM WAV using the pinned
+[ADPCM-XQ library](../lib/AdpcmXq/README.md). `VoiceMemoConfig::FORMAT` selects `ImaAdpcm4` or `Pcm16`;
+`VOICE_MEMO_PCM_BASELINE` also selects PCM for comparison builds. There is no runtime selector or simultaneous
+dual recording. Capture remains 16-bit PCM at 16 kHz with the same 2x saturating gain before queueing.
+The existing writer assembles codec blocks, encodes and writes them through HalStorage. No additional task,
+filter, noise shaping or lookahead is enabled. ADPCM encoding is the compression step.
+
+### Blocks, samples and lifetime
+
+Each 256-byte block holds 505 samples. Normal rollover rounds the five-minute target **up** to the next complete
+block: 4,800,025 samples at 16 kHz, or 300.0015625 seconds. No samples are discarded at rollover. The writer stages
+incoming PCM, writes complete blocks, and finalizes a chunk when it reaches that threshold. A new file is opened
+only when its first complete block is available; no empty WAV or placeholder is created for a shorter recording.
+
+Pause/Stop still stop capture and drain the existing queue. The writer retains all complete blocks and intentionally
+discards only the last 0–504 samples (at most 31.5 ms at 16 kHz). It never pads them. Resume starts a fresh chunk in
+the same session; no tail crosses the intentional pause. The WAV `fact` count, durations and all session offsets
+count retained samples only. PCM fallback retains its exact five-minute splitting and every final PCM sample.
+No new task, capture handshake or allocation is needed for alignment.
+
+The context survives Pause and chunk rollover, but every encoded block contains its own predictor/index and can
+decode independently. Stop/error/exit releases the context and staging buffers after the workers finish.
+
+New journals use version 3. The start/chunk fields are unchanged from version 2, but `padding_samples` is always
+zero. After finalizing a successful Pause/Stop segment, a nonempty discarded tail produces a separate entry:
+
+```json
+{"event":"discard","sample":505,"discarded_samples":1,"reason":"incomplete_tail"}
+```
+
+`sample` is the retained session offset, not the captured offset. The following `pause`/`stop` entry uses the same
+offset. Zero discarded samples needs no entry. A sub-block segment can therefore contain a discard entry and no
+chunk entry. Chunk numbering remains consecutive across Resume. Failure to persist the discard entry reports a
+storage error; it must not silently report success. The checker sums the discarded counts separately from duration.
+
+Existing version-1 PCM and version-2 padded ADPCM sessions remain readable. Failed writes/finalization retain
+existing `.part` files and report failure; these are never relabeled as intentional tail discard. Only successfully
+written complete codec blocks advance retained counters. A capture failure preserves any current file as `.part`;
+a failure before the first complete block may leave only the unfinished journal. Do not treat partial headers as
+finalized or automatically repair them. Earlier completed WAVs remain available. Power-loss guarantees are unchanged.
+
+The encoder adds roughly 2 KiB of checked, session-lifetime heap allocations: 505 PCM samples, 256 encoded bytes,
+context and its index-search scratch array. This avoids large local arrays and repeated allocations per block.
+The library context allocation is checked before use, including its internal memset. The writer's extra 2 KiB
+stack allowance covers the initial recursive index search; it is provisional, not measured hardware headroom.
+The existing PCM pool remains 64 KiB, so compression does not expand capture's stall budget. Small 256-byte
+storage writes may have different latency from PCM; measure under the actual card workload.
+
+### Desktop validation and merging
+
+```sh
+bash test/voice_memo/run_host_tests.sh
+.venv/bin/python test/voice_memo/check_wav.py /path/to/session-000001 \
+  --merge /path/to/session-000001-merged.wav
+```
+
+`--merge` preserves decoded PCM export, including per-chunk trimming of legacy padding. FFmpeg must be on PATH
+for ADPCM decoding. To merge compatible **padding-free** ADPCM chunks without decoding or re-encoding:
+
+```sh
+.venv/bin/python test/voice_memo/check_wav.py /path/to/session-000001 \
+  --merge-adpcm /path/to/session-000001-adpcm.wav
+```
+
+The direct merger writes one header with combined RIFF/data/fact lengths, then copies each chunk's encoded blocks
+unchanged. It validates matching format/rate/block framing and rejects any padding, including padding in older
+recordings. Use decoded `--merge` for those. Both exports omit intentional pauses and discarded tails. A session
+with no complete blocks can export an empty PCM WAV, but direct ADPCM export reports that there is no audio to merge.
+
+Output must be a new file outside the session directory. Sources are preserved. Direct merge uses bounded copying;
+decoded export also uses a temporary decoded chunk on disk. Both formats have ordinary WAV/RIFF size limits, and
+ADPCM `fact` has a 32-bit sample-count limit; split very long exports rather than wrapping lengths. Structural
+checking and direct merge require only Python's standard library. Never concatenate legacy padded payloads blindly.
+
+Native macOS `afinfo`/`afconvert` rejected research ADPCM files, including an FFmpeg control. Decoded PCM is the
+compatibility path. VLC/QuickTime playback of the firmware representation remains an application/device test.
+
+Host checks exercise both formats with the actual writer, sanitizers, five-minute boundaries, 1/504/505/506-sample
+endings, discarded counts, sub-block Pause/Resume, empty Stop, allocation failure and storage faults. A split
+capture batch crosses the approximate five-minute boundary without losing samples. FFmpeg decodes the directly
+merged ADPCM and must produce exactly the same PCM bytes as decoding the individual chunks in order. Legacy
+padded sessions still export their exact true sample counts; direct merging rejects internal padding. The checker
+also rejects malformed headers/counts and refuses to overwrite originals. These are not measurements of ESP32 encoding throughput or microphone continuity.
+
+### PaperMono gate
+
+Upload the ADPCM build and record speech past two chunk boundaries, Pause/Resume, Stop, and copy the whole session.
+Compare with PCM using the same rate/gain and a repeatable timed source; keep original references.
+Expect ordinary ADPCM chunks to last 300.0015625 seconds, zero padding in every published WAV, and only journaled
+tail loss on Pause/Stop. Exercise Stop just before/after a full block and around rollover, a sub-block recording,
+and repeated short Pause/Resume. Confirm retained totals plus intentional discards match accepted input on clean
+runs. Export both PCM and direct ADPCM on the desktop, decode with FFmpeg and compare samples. Real scheduling,
+SD stalls, sleep/exit and first-block stack checks still require hardware; host tests do not establish continuity. Listen around
+boundaries and to quiet speech, consonants and loud transients. Check zero DMA/queue overflow and stable heap across
+repeated sessions, including immediate Stop, exit and the frontlight overlay. Repeat on battery and with USB logging.
+
+Existing batch timing includes encoding and rollover. Each finalized chunk also logs total `encode_us` and
+`max_encode_us` (encoding only); existing `writer_stack`, `capture_stack`, `buffer_high`, heap and clipping logs
+provide the rest. Verify stack headroom during the first block and queue margin during SD stalls before extending
+meeting use. No on-device throughput, power saving or subjective audio-quality claim is made by host tests.
+Filtering and the notebook remain separate later experiments.
+
+Earlier padded implementation evidence (before block-aligned tails): both PaperMono PCM/ADPCM builds passed. S3 GCC 14.2 `-Os -fstack-usage`
+reports the patched encoder frame at 128 bytes (upstream 848); recursive search frames remain 160 bytes each.
+The saved ten-second `.tmp/memo-0001.wav` reference, passed through the actual host session writer without
+additional gain, produced 81,212 bytes versus 320,044 bytes PCM (74.6% smaller). FFmpeg plus fact-count trimming
+returned exactly 160,000 samples. Sample-aligned SNR was 27.89 dB with peak absolute sample error 5,953;
+these numerical results do not establish perceived speech quality. The source recording was preserved.
