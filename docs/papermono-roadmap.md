@@ -1,11 +1,38 @@
 # PaperMono personal tools roadmap
 
-Status: **proposal for discussion, not an implementation specification**. Reviewed 2026-09-15.
-Agreed direction: one Tools corner on Home. Calculator is accepted as complete for now, including arithmetic,
-editing and independent key feedback. Voice memo now has a local implementation of session directories,
-continuous buffered chunks and pause/resume; the new long-recording hardware checks remain open. See the
-[voice memo plan](papermono-voice-memo-plan.md) for current scope and tests.
-Later feature ordering remains proposed.
+Status: current implementation summary plus **proposed later work**, reviewed 2026-09-16.
+Tools and calculator are accepted as complete for now. Voice memo supports continuous buffered recording,
+session directories, pause/resume and block-aligned ADPCM WAV, committed in `f9d4d6d0`. PCM remains a compile-time
+fallback. Host tests and both PaperMono builds pass; remaining hardware measurements are listed in the
+[voice memo plan](papermono-voice-memo-plan.md). Treat the ADPCM feature as complete for roadmap ordering,
+without claiming the pending device measurements have been performed.
+
+## Current next-step shortlist
+
+This is the proposed order from discussion, not authorization to implement every item. Filtering is not an upload prerequisite.
+
+| Next candidate | Small first increment | Dependencies / evidence still needed |
+| --- | --- | --- |
+| Desktop filtering comparison | Compare bypass against 4 kHz / 6 kHz low-pass on representative speech; optionally investigate low rumble separately | Preserve originals; listen at matched levels. Add firmware filtering only if useful. Existing clipped samples cannot be repaired. |
+| Upload one completed session | Send ADPCM chunks and JSONL with acknowledgment, retaining local originals | Agree endpoint/auth and duplicate-safe acknowledgment. Server may merge/decode; no on-device archive required. |
+| Durable upload queue | Persist pending work, retry failures and survive restarts, one upload at a time within Tools | Working upload first; define navigation/sleep lifetime and SD/radio coexistence. |
+| Plain server transcription | Produce a raw transcript from a memo | Keep audio and evaluate actual results. Meeting diarization is a separate experiment. |
+| Transcript improvements | AI cleanup, personal vocabulary, then agentic passes / Hermes handoff | Useful raw transcription and actual corrections first; later order remains flexible. |
+| BLE utilities | One-host media controls, then compose/type/send and jiggler | Pairing, report lifecycle and hardware tests; multiple live hosts and touch mouse remain later experiments. |
+| Calendar + task portrait | Read-only snapshot of current work and upcoming events | Agree content/provider; editing and ongoing sync deferred. |
+| Blog drafts alongside development | Explain recorder/FreeRTOS ownership, codec trade-offs and experimental evidence | Three drafts proposed below; not yet created. |
+
+Optional reliability work: longer timed-source recordings, SD/stack/heap measurements, full-card/error checks,
+battery measurements, partial-file recovery and reopening sessions after reboot. Recovery/reopening are not
+implemented. Opus stays optional if upload/storage pressure justifies its added CPU, RAM and framing work.
+There are no measured codec-specific battery-runtime figures yet.
+
+Proposed blog files under `docs/blog/` (not created or approved as final posts):
+
+- `01-reliable-recording-on-papermono.md`: capture/writer tasks, bounded buffers, SD stalls, lifecycle and journal.
+- `02-choosing-an-audio-format.md`: codec sizes, CPU/heap/stack evidence, padding/alignment and upload packaging.
+- `03-audio-experiments-still-to-run.md`: filters, Opus, battery and listening experiments, separating hypotheses from results.
+
 
 Development approach: [Building PaperMono tools](papermono-tools-development.md).
 
@@ -25,9 +52,9 @@ and [roadmap](../ROADMAP.md). Those documents describe upstream policy, not a ve
 - Measure internal heap, task stacks, and PSRAM separately on the device. PaperMono's PSRAM does not make
   DMA, radio allocations, or concurrent SD access free. No promised memory/performance gains without measurements.
 
-## What already exists
+## Initial reuse survey (historical)
 
-Source review only: no firmware was built, flashed, or tested for this plan.
+This original survey was source review only; implementation status above supersedes its milestone assumptions.
 Snapshots: this fork `b5fb406f`, reference CrossPoint `6c83eddb`, CrossPlay `39c5ecb6`.
 At the initial review the fork's `freeink-sdk` checkout was uninitialized. Its pinned commit `7f6bd0f` was inspected through
 the reference CrossPoint SDK's Git objects; a newer reference checkout is not assumed to be the pinned SDK.
@@ -55,7 +82,7 @@ Vendor references: [PaperMono hardware](https://docs.m5stack.com/en/core/PaperMo
 uses M5Unified's `Mic_Class` and M5IOE1 power control. It is a reference for a focused experiment;
 its full `M5.begin()`/display setup is not an integration recipe for this reader.
 
-## Practical order — complete idea inventory
+## Original idea inventory (preserved)
 
 These are independent tracks, not mandatory phases. Calculator is a low-risk starting recommendation,
 not a dependency of recording or BLE. The first recorder stands alone even if server work never happens.
@@ -83,7 +110,7 @@ Audio progression: **one file → continuous chunks → transcription → AI cle
 → personal dictionary**. Upload/queue work supports that progression; it need not wait for every recording feature.
 No on-device transcription or AI runtime is a prerequisite.
 
-## Next few baby steps
+## Original baby-step scopes (historical; use the shortlist above)
 
 ### 1. Basic calculator, with its own entry and a way back
 
@@ -139,13 +166,13 @@ Host tests/build success do not substitute for PaperMono validation. Capture a r
 
 ## Decisions to make only when needed
 
-- **Now:** validate continuous voice recording and pause/resume on PaperMono; calculator is accepted for now.
+- **Next recommendation:** desktop filtering comparison, then single-session upload; ADPCM and calculator are accepted for now. Keep pending device checks visible.
 - **Before uploading:** choose the server/auth and define what acknowledgment means. Keep files until confirmed;
   handle the “server saved it but the reply was lost” case without duplicate submissions or silent deletion.
 - **Before background queue work:** define the Tools-area lifetime, explicit stop/pause behavior, reboot recovery,
   and USB Drive exclusion. Begin with one upload at a time and durable pending/failed state; only introduce shared
   machinery when a second real submission feature needs it. Do not assume deep sleep can keep uploads running.
-- **Before meeting chunks:** use a timed audio source and inspect boundaries for missing/duplicated samples,
+- **When validating meeting chunks:** use a timed audio source and inspect boundaries for missing/duplicated samples,
   including under UI/SD load. Choose chunk length after measuring, not as architecture now.
 - **Before multi-host or pointer control:** settle target OS/device combinations and run the relevant experiment.
 - **Before the portrait view:** clarify what “working on” means and where calendar/tasks come from.

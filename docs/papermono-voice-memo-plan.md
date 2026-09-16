@@ -4,6 +4,9 @@ Status: ten-second hardware capture confirmed by the owner; sample WAV format an
 Continuous session recording and pause/resume are implemented locally; their device checklist remains open.
 Follow [Building PaperMono tools](papermono-tools-development.md). Parent: [roadmap](papermono-roadmap.md).
 
+Desktop research: [audio experiments](papermono-audio-experiments.md) covers the Jupyter lab, biquad
+filtering and codec comparisons. Those experiments do not change the firmware recording format.
+
 ## Original single-file milestone
 
 Tools → Voice memo → Record → Stop → one playable local WAV file. Copy it using existing File Transfer
