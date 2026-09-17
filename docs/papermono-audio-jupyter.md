@@ -47,6 +47,11 @@ FFmpeg on PATH (`brew install ffmpeg` on macOS), validates framing/sample counts
 and trims declared final-block padding. Sources are unchanged; filtering/export uses decoded PCM.
 It checks consistent chunk sample rates and averages PCM stereo to mono. FLAC and Opus are not supported.
 
+The WAV header drives the sample rate, including 16/32/48 kHz: there is no resampling. Rerun the loading
+cell and all following cells when changing recordings. Loading clears the previous filter result; exports
+use the sample rate and source captured by Apply & compare. Coefficients designed at 32/48 kHz must not
+be used in the 16 kHz firmware without redesign.
+
 ## Original overview
 
 The notebook reuses [analyze_recording.py](../scripts/audio/analyze_recording.py):

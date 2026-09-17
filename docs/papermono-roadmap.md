@@ -9,6 +9,9 @@ without claiming the pending device measurements have been performed.
 
 ## Current next-step shortlist
 
+Immediate next increment: [persistent recorder metrics](papermono-recorder-metrics-plan.md)—one-second summaries,
+batched SD writes, using the local 24 kHz PCM trial to inform buffer and performance decisions. Not implemented yet.
+
 This is the proposed order from discussion, not authorization to implement every item. Filtering is not an upload prerequisite.
 
 | Next candidate | Small first increment | Dependencies / evidence still needed |
