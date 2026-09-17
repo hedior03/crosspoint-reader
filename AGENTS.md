@@ -1,5 +1,20 @@
 # CrossPoint Reader Development Guide
 
+## PaperMono Fork Addendum
+
+This private derivative targets M5Stack PaperMono. Read
+`docs/papermono/README.md` for fork scope and the current baseline plan. Its
+approved built-in utilities and home-screen work are intentionally outside the
+original reading-only scope below; keep all other upstream engineering guidance.
+Use `papermono`, not the default C3 build environment. Check current source and
+`docs/activity-manager.md` / `docs/contributing/touch-and-ui.md` where older
+examples below differ. PaperMono has PSRAM, but internal/DMA memory is still
+limited. Simulator and sibling `../multiboot/` are separate projects, not required
+dependencies. Do not flash, clear SD caches, or modify partitions during build
+setup. `origin` is private and `upstream` is public; never push to upstream.
+
+## Original Upstream Guide
+
 Project: Open-source e-reader firmware for Xteink X4 (ESP32-C3)
 Mission: Provide a lightweight, high-performance reading experience focused on EPUB rendering on constrained hardware.
 

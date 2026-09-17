@@ -30,7 +30,26 @@ int HomeActivity::getMenuItemCount() const {
   if (hasOpdsServers) {
     count++;
   }
+  if (HalLed::supported()) {
+    count++;
+  }
   return count;
+}
+
+int HomeActivity::getMenuTop(const int renderedMenuCount) const {
+  const auto& metrics = UITheme::getInstance().getMetrics();
+  const int defaultTop = metrics.homeTopPadding + metrics.homeCoverTileHeight + metrics.homeMenuTopOffset;
+  if (!HalLed::supported() || renderedMenuCount <= 0) return defaultTop;
+
+  int marginTop, marginRight, marginBottom, marginLeft;
+  renderer.getOrientedViewableTRBL(&marginTop, &marginRight, &marginBottom, &marginLeft);
+  const Rect safe = UITheme::getInstance().getScreenSafeArea(renderer, true, false);
+  const int menuBottom = std::min(renderer.getScreenHeight() - marginBottom, safe.y + safe.height);
+  const int menuHeight =
+      renderedMenuCount * GUI.getMenuRowHeight(renderer) + (renderedMenuCount - 1) * metrics.menuSpacing;
+  // Reclaim only spare cover-to-menu space; keep at least the normal row gap.
+  const int spareGap = std::max(0, metrics.homeMenuTopOffset - metrics.menuSpacing);
+  return defaultTop - std::clamp(defaultTop + menuHeight - menuBottom, 0, spareGap);
 }
 
 void HomeActivity::loadRecentBooks(int maxBooks) {
@@ -194,6 +213,9 @@ void HomeActivity::loop() {
       case HomeMenuItem::SETTINGS_MENU:
         onSettingsOpen();
         break;
+      case HomeMenuItem::LED_CONTROL:
+        onLedControlOpen();
+        break;
       default:
         break;
     }
@@ -249,9 +271,9 @@ void HomeActivity::loop() {
     return;
   }
 
-  const int menuTop = metrics.homeTopPadding + metrics.homeCoverTileHeight + metrics.homeMenuTopOffset;
   const int renderedMenuCount =
       menuCount - (metrics.homeContinueReadingInMenu ? 0 : static_cast<int>(recentBooks.size()));
+  const int menuTop = getMenuTop(renderedMenuCount);
   int menuRow = -1;
   // Row height from the theme, not the metrics table: RoundedRaff draws
   // font-derived rows and the touch grid must match the visuals exactly.
@@ -309,6 +331,11 @@ void HomeActivity::render(RenderLock&&) {
                                         tr(STR_SETTINGS_TITLE)};
   std::vector<UIIcon> menuIcons = {Folder, Recent, Transfer, Settings};
 
+  if (HalLed::supported()) {
+    menuItems.insert(menuItems.end() - 1, tr(STR_LED_CONTROL));
+    menuIcons.insert(menuIcons.end() - 1, Settings);
+  }
+
   if (hasOpdsServers) {
     menuItems.insert(menuItems.begin() + 2, tr(STR_OPDS_BROWSER));
     menuIcons.insert(menuIcons.begin() + 2, Library);
@@ -322,7 +349,7 @@ void HomeActivity::render(RenderLock&&) {
 
   GUI.drawButtonMenu(
       renderer,
-      Rect{0, metrics.homeTopPadding + metrics.homeCoverTileHeight + metrics.homeMenuTopOffset, pageWidth,
+      Rect{0, getMenuTop(static_cast<int>(menuItems.size())), pageWidth,
            pageHeight - (metrics.headerHeight + metrics.homeTopPadding + metrics.verticalSpacing +
                          metrics.homeMenuTopOffset + metrics.buttonHintsHeight)},
       static_cast<int>(menuItems.size()),
@@ -352,6 +379,8 @@ void HomeActivity::onFileBrowserOpen() { activityManager.goToFileBrowser(); }
 void HomeActivity::onRecentsOpen() { activityManager.goToRecentBooks(); }
 
 void HomeActivity::onSettingsOpen() { activityManager.goToSettings(); }
+
+void HomeActivity::onLedControlOpen() { activityManager.goToLedControl(); }
 
 void HomeActivity::onFileTransferOpen() { activityManager.goToFileTransfer(); }
 

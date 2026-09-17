@@ -1,0 +1,4 @@
+# Host tests and the repository's sanctioned formatting wrapper only.
+cmake>=3.20
+ninja
+clang-format>=21,<22

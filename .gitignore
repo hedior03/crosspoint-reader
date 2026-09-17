@@ -31,3 +31,12 @@ lib/EpdFont/scripts/output/
 /sdkconfig.*
 sdkconfig.sticky
 flake.*
+
+# Local PaperMono device artifacts never belong in the firmware repository.
+backups/
+/multiboot/
+/firmware/
+/sdcard/
+/*.bin
+/.env
+/.env.*

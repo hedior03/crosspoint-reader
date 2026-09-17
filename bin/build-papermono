@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+if [[ ! -x "$root/.venv/bin/pio" ]]; then
+  printf '%s\n' "Install build-requirements.lock into Reader's .venv first." >&2
+  exit 1
+fi
+
+export VIRTUAL_ENV="$root/.venv"
+export PATH="$VIRTUAL_ENV/bin:$PATH"
+unset PYTHONHOME PYTHONPATH
+export PYTHONNOUSERSITE=1
+export PLATFORMIO_CORE_DIR="$root/.cache/platformio"
+export PLATFORMIO_PLATFORMS_DIR="$PLATFORMIO_CORE_DIR/platforms"
+export PLATFORMIO_PACKAGES_DIR="$PLATFORMIO_CORE_DIR/packages"
+export PLATFORMIO_GLOBALLIB_DIR="$PLATFORMIO_CORE_DIR/lib"
+export PLATFORMIO_CACHE_DIR="$PLATFORMIO_CORE_DIR/.cache"
+export PLATFORMIO_WORKSPACE_DIR="$root/.pio"
+export PLATFORMIO_BUILD_DIR="$root/.pio/build"
+export PLATFORMIO_LIBDEPS_DIR="$root/.pio/libdeps"
+export PLATFORMIO_BUILD_CACHE_DIR="$root/.cache/build"
+
+# Deliberately build-only: no forwarded arguments or upload/reset target.
+exec "$VIRTUAL_ENV/bin/pio" run --project-dir "$root" -e papermono-gh_release \
+  --target buildprog --target checkprogsize
