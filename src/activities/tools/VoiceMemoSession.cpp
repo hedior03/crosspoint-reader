@@ -30,6 +30,10 @@ bool VoiceMemoSession::journal(const char* line) {
 bool VoiceMemoSession::begin() {
   directory[0] = '\0';
   releaseEncoder();
+  LOG_INF("MEMO", "Pause/Stop tail discard limit: %u samples (%.3f ms)",
+          unsigned(VoiceMemoConfig::ADPCM ? VoiceMemoConfig::CODEC_BLOCK_SAMPLES - 1 : 0),
+          VoiceMemoConfig::ADPCM ? 1000.0 * (VoiceMemoConfig::CODEC_BLOCK_SAMPLES - 1) / VoiceMemoConfig::SAMPLE_RATE
+                                 : 0.0);
   if constexpr (VoiceMemoConfig::ADPCM) {
     // Once per session: codec staging and search scratch cannot live on the writer stack.
     encoder = makeUniqueNoThrow<Encoder>();
@@ -167,7 +171,8 @@ bool VoiceMemoSession::finishChunk(bool complete) {
                "{\"event\":\"discard\",\"sample\":%llu,\"discarded_samples\":%u,\"reason\":\"incomplete_tail\"}\n",
                static_cast<unsigned long long>(totalSamples), static_cast<unsigned>(encoder->pending));
       if (!journal(line)) return false;
-      LOG_INF("MEMO", "Discarded incomplete tail: %u samples", static_cast<unsigned>(encoder->pending));
+      LOG_INF("MEMO", "Discarded incomplete tail: %u samples (%.3f ms)", static_cast<unsigned>(encoder->pending),
+              1000.0 * encoder->pending / VoiceMemoConfig::SAMPLE_RATE);
       encoder->pending = 0;
     }
   }
