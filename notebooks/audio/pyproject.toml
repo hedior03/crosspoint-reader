@@ -1,0 +1,11 @@
+[project]
+name = "papermono-audio-lab"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+  "jupyterlab>=4,<5",
+  "ipywidgets>=8,<9",
+  "numpy>=2,<3",
+  "scipy>=1.14,<2",
+  "matplotlib>=3.9,<4",
+]
