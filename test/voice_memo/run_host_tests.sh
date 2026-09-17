@@ -5,6 +5,10 @@ test_dir=$(mktemp -d)
 trap 'rm -rf "$test_dir"' EXIT
 c++ -DVOICE_MEMO_PCM_BASELINE -std=c++20 -Wall -Wextra -Werror -fsanitize=address,undefined test/voice_memo/WavTest.cpp -o "$test_dir/wav"
 "$test_dir/wav"
+c++ -std=c++20 -O2 -Wall -Wextra -Werror -fsanitize=address,undefined \
+  test/voice_memo/FilterTest.cpp -o "$test_dir/filter"
+"$test_dir/filter" "$test_dir/input.f32" "$test_dir/output.f32"
+uv run --script test/voice_memo/check_filter.py "$test_dir/input.f32" "$test_dir/output.f32"
 for source in adpcm-lib adpcm-dns; do
   cc -std=c99 -fsanitize=address,undefined -c "lib/AdpcmXq/$source.c" -o "$test_dir/$source.o"
 done

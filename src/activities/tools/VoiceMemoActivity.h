@@ -24,7 +24,7 @@ class VoiceMemoActivity final : public Activity, private UiAppHost {
 
  private:
   enum class Status { Ready, Starting, Recording, Saving, Paused, Saved, Failed };
-  enum class Error { None, Setup, Capture, BufferFull, StorageIo };
+  enum class Error { None, Setup, Capture, BufferFull, StorageIo, Processing };
   struct Block {
     size_t count = 0;
     int16_t samples[VoiceMemoConfig::BLOCK_SAMPLES];

@@ -57,12 +57,13 @@ bool VoiceMemoSession::begin() {
     }
     char line[224];
     snprintf(line, sizeof(line),
-             "{\"version\":3,\"event\":\"start\",\"sample_rate\":%lu,\"bits\":16,\"channels\":1,\"gain\":%ld,"
-             "\"format\":\"%s\",\"block_bytes\":%u,\"samples_per_block\":%u}\n",
-             static_cast<unsigned long>(VoiceMemoConfig::SAMPLE_RATE), static_cast<long>(VoiceMemoConfig::GAIN),
+             "{\"version\":3,\"event\":\"start\",\"sample_rate\":%lu,\"bits\":16,\"channels\":1,\"gain\":%.9g,"
+             "\"format\":\"%s\",\"block_bytes\":%u,\"samples_per_block\":%u,\"filter\":\"%s\",\"gain_db\":%g}\n",
+             static_cast<unsigned long>(VoiceMemoConfig::SAMPLE_RATE), 1.0,
              VoiceMemoConfig::ADPCM ? "ima_adpcm4" : "pcm16",
              VoiceMemoConfig::ADPCM ? VoiceMemoConfig::CODEC_BLOCK_BYTES : 2u,
-             VoiceMemoConfig::ADPCM ? VoiceMemoConfig::CODEC_BLOCK_SAMPLES : 1u);
+             VoiceMemoConfig::ADPCM ? VoiceMemoConfig::CODEC_BLOCK_SAMPLES : 1u,
+             VoiceMemoConfig::FILTER_ENABLED ? "ellip_hp150_lp4500_v1" : "none", 0.0);
     return journal(line);
   }
   LOG_ERR("MEMO", "Session identifiers exhausted");

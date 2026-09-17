@@ -1,7 +1,8 @@
 # PaperMono audio experiments
 
 Status: updated 2026-09-16. Block-aligned ADPCM WAV is implemented and committed (`f9d4d6d0`);
-PCM remains the comparison fallback. Filtering, uploads and Opus remain separate future work.
+PCM remains the comparison fallback. The owner-selected 150–4500 Hz elliptic filter is now implemented locally
+for a device trial; uploads and Opus remain future work.
 See the [current roadmap shortlist](papermono-roadmap.md#current-next-step-shortlist) for proposed ordering.
 
 The goal is a useful, reliable personal voice recorder with a possible Plaud-like workflow: record locally,
@@ -26,18 +27,19 @@ The desktop lab has been created and executed with an earlier short recording. I
 spectrograms and original/filtered audio players. Numerical checks cover filter response and state continuity
 across blocks. The ten-minute recording has not been independently analyzed in this side conversation.
 
-Capture remains 16 kHz mono signed 16-bit PCM with 2x saturating gain. Storage defaults to ADPCM WAV.
+Capture remains raw 16 kHz mono signed 16-bit PCM. The writer filters and saturates before
+encoding. Storage defaults to ADPCM WAV.
 The checker supports legacy padded files and the current padding-free format; direct ADPCM merge and decoded
 PCM export are implemented. See the recorder plan for tail discard and journal semantics.
 
 ## How processing and compression fit together
 
-The current path is capture → gain/saturation → bounded PCM queue → ADPCM encoding → SD.
-No filter is active. If filtering proves useful, it should precede additional gain/clipping; its ownership
-and any movement of gain must be decided in that feature, rather than simply filtering already-clipped PCM.
+The current path is capture → bounded PCM queue → selected IIR → rounding/saturation → ADPCM encoding → SD.
+See [filtering notes](papermono-audio-filters.md#implemented-owner-selected-trial) for coefficients, numerical
+checks and pending device measurements. Earlier clipped PCM cannot demonstrate prevention of upstream overload.
 A conceptual future data path is:
 
-**Microphone capture → bounded audio buffer → filter → gain → encode or retain PCM → SD**
+**Microphone capture → bounded audio buffer → filter → rounding/saturation → encode or retain PCM → SD**
 
 Keep capture independent of slow storage. A small filter can process an existing block before writing or
 encoding it; it does not automatically need another worker, queue, or audio framework. The existing two-task
@@ -64,8 +66,8 @@ Do not plan around useful gzip savings after an audio codec.
 
 1. **Keep reference recordings.** Include close speech, distant speech, room noise, handling and air movement.
    Record the distance, environment and existing firmware gain. Do not overwrite the originals.
-2. **Compare filtering on the PC.** Compare bypass and the proposed 4 kHz / 6 kHz low-pass at 16 kHz sampling.
-   A gentle high-pass is a separate option for low rumble, not an agreed prerequisite.
+2. **Validate the selected filter.** The owner selected a 150 Hz high-pass / 4500 Hz low-pass elliptic preset.
+   Compare its firmware output with bypass at matched gain; earlier 4 kHz / 6 kHz suggestions remain alternatives.
    Listen at consistent levels and inspect the same excerpts and color scales.
 3. **Compare codecs using the same input.** Measure file sizes and listen to decoded output. If transcription
    is available, compare word errors and speaker handling too. Do not confuse a codec comparison with a filter change.

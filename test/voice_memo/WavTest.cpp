@@ -3,13 +3,8 @@
 #include <cstdio>
 #include <cstring>
 
-#include "../../src/activities/tools/VoiceMemoGain.h"
 #include "../../src/activities/tools/VoiceMemoWav.h"
 int main() {
-  for (int sample : {0, 1, -1, 1000, -1000, 16383, 16384, -16384, -16385, 32767, -32768}) {
-    const int expected = std::clamp(sample * VoiceMemoConfig::GAIN, -32768, 32767);
-    assert(voiceMemoApplyGain(static_cast<int16_t>(sample)) == expected);
-  }
   const auto empty = voiceMemoWavHeader(0);
   assert(empty[4] == 36 && empty[40] == 0);
   for (uint32_t sampleCount : {0u, 1u, 16000u, 123456u, 4800000u}) {

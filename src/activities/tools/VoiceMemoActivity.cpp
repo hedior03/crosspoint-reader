@@ -8,7 +8,8 @@
 #include <algorithm>
 #include <cstdio>
 
-#include "VoiceMemoGain.h"
+#include "VoiceMemoFilter.h"
+#include "VoiceMemoPcm.h"
 #include "components/UITheme.h"
 
 namespace fui = freeink::ui;
@@ -147,12 +148,6 @@ void VoiceMemoActivity::capture() {
     }
     lastData = millis();
     block.count = received;
-    for (int i = 0; i < received; ++i) {
-      block.samples[i] = voiceMemoApplyGain(block.samples[i]);
-      const int32_t value = block.samples[i];
-      peak = std::max(peak, uint32_t(value < 0 ? -value : value));
-      if (value == -32768 || value == 32767) ++clipped;
-    }
     if (xQueueSend(filledBlocks, &index, 0) != pdPASS) {
       xQueueSend(freeBlocks, &index, 0);
       fail(Error::BufferFull);
@@ -169,6 +164,8 @@ void VoiceMemoActivity::capture() {
 }
 
 void VoiceMemoActivity::write() {
+  VoiceMemoFilter filter;
+  uint64_t maxProcessingUs = 0;
   uint64_t maxBatchUs = 0;
   uint32_t histogram[5]{};  // <1ms, <10ms, <100ms, <1s, >=1s; includes rollover work.
   bool writable = session.event(resuming ? "resume" : "recording", resumeGapMs);
@@ -179,8 +176,25 @@ void VoiceMemoActivity::write() {
       if (writable) {
         const auto started = esp_timer_get_time();
         const auto previousChunk = session.chunk();
-        writable = session.append(blocks[index].samples, blocks[index].count);
-        if (!writable) fail(Error::StorageIo);
+        auto& block = blocks[index];
+        for (size_t i = 0; i < block.count; ++i) {
+          const float filtered = filter.process(block.samples[i]);
+          if (!std::isfinite(filtered)) {
+            LOG_ERR("MEMO", "Non-finite filter output; retaining partial recording");
+            writable = false;
+            fail(Error::Processing);
+            break;
+          }
+          block.samples[i] = voiceMemoToPcm(filtered);
+          const int32_t value = block.samples[i];
+          peak = std::max(peak, uint32_t(value < 0 ? -value : value));
+          if (value == -32768 || value == 32767) ++clipped;
+        }
+        maxProcessingUs = std::max(maxProcessingUs, uint64_t(esp_timer_get_time() - started));
+        if (writable) {
+          writable = session.append(block.samples, block.count);
+          if (!writable) fail(Error::StorageIo);
+        }
         const uint64_t elapsed = esp_timer_get_time() - started;
         maxBatchUs = std::max(maxBatchUs, elapsed);
         ++histogram[elapsed < 1000 ? 0 : elapsed < 10000 ? 1 : elapsed < 100000 ? 2 : elapsed < 1000000 ? 3 : 4];
@@ -195,8 +209,10 @@ void VoiceMemoActivity::write() {
   }
   const auto started = esp_timer_get_time();
   if (!session.finishChunk(error == Error::None)) fail(Error::StorageIo);
+  const uint64_t finalizeUs = esp_timer_get_time() - started;
+  LOG_INF("MEMO", "max_filter_us=%llu", static_cast<unsigned long long>(maxProcessingUs));
   LOG_INF("MEMO", "max_batch_us=%llu finalize_us=%llu latency_bins=%lu/%lu/%lu/%lu/%lu writer_stack=%u",
-          static_cast<unsigned long long>(maxBatchUs), static_cast<unsigned long long>(esp_timer_get_time() - started),
+          static_cast<unsigned long long>(maxBatchUs), static_cast<unsigned long long>(finalizeUs),
           static_cast<unsigned long>(histogram[0]), static_cast<unsigned long>(histogram[1]),
           static_cast<unsigned long>(histogram[2]), static_cast<unsigned long>(histogram[3]),
           static_cast<unsigned long>(histogram[4]), uxTaskGetStackHighWaterMark(nullptr));
@@ -224,7 +240,8 @@ void VoiceMemoActivity::finishWorkers() {
     if (!session.event(event)) fail(Error::StorageIo);
   }
   if (error != Error::None) {
-    LOG_ERR("MEMO", "Incomplete session, error=%u (1=setup 2=capture 3=buffer 4=storage)", unsigned(error.load()));
+    LOG_ERR("MEMO", "Incomplete session, error=%u (1=setup 2=capture 3=buffer 4=storage 5=processing)",
+            unsigned(error.load()));
     status = Status::Failed;
   } else {
     status = pauseRequested ? Status::Paused : Status::Saved;

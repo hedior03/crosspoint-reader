@@ -102,10 +102,56 @@ framework for two sections. Check existing dependencies and the precise API when
 Filtering can make a signal more predictable for lossless coding, but compression improvement is an experiment,
 not a filter-design objective that should override speech quality. See [codec notes](papermono-audio-codecs.md).
 
-## Next proposed comparison
+## Implemented owner-selected trial
 
-No firmware filter is enabled. Compare bypass, a 4 kHz low-pass and a 6 kHz low-pass at 16 kHz sampling on the
-same representative speech. These are candidates, not selected cutoffs. Listen before adopting a filter;
-smoother input may reduce ADPCM prediction error but will not materially change its fixed-rate file size.
-Filtering is not a prerequisite for session uploads. Preserve raw references and keep additional gain/clipping
-after filtering if a later firmware experiment is justified.
+The owner-supplied coefficients are preserved in [voice-ellip-150-4500.json](audio-presets/voice-ellip-150-4500.json):
+16 kHz, elliptic high-pass 150 Hz plus low-pass 4500 Hz, fourth order per edge (four SOS sections total),
+0.5 dB ripple and 40 dB stopband attenuation. Coefficients are used in the supplied order and rounded to float32.
+They are not redesigned from the descriptive cutoff settings at runtime.
+
+`VoiceMemoFilter.h` uses transposed direct form II, the standard structure used by SciPy `sosfilt`. Each section
+requires five multiplications, four additions/subtractions and two state floats per input sample. Four sections
+therefore need 32 bytes of state; 24 float coefficients occupy 96 bytes of read-only data. There is no allocation,
+FFT, convolution window, float block buffer or new task. One sample passes through all four sections before
+conversion back to int16; no intermediate int16 clipping occurs.
+
+ESP-DSP was investigated: its `dsps_biquad_f32_aes3` is optimized S3 assembly using ordinary direct form II,
+with float input/output buffers and two state floats. It is not already a project dependency. The small transposed
+implementation matches the desktop algorithm and processes existing int16 queue blocks without another float
+buffer or dependency. Investigate the optimized kernel only if device measurements show a need.
+[ESP-DSP C reference](https://github.com/espressif/esp-dsp/blob/master/modules/iir/biquad/dsps_biquad_f32_ansi.c),
+[S3 implementation](https://github.com/espressif/esp-dsp/blob/master/modules/iir/biquad/dsps_biquad_f32_aes3.S).
+
+Processing order is **raw PCM capture → existing queue → filter → rounding/saturation → ADPCM or PCM → SD**.
+The writer owns filter state, keeps it across batches and chunk rollovers, and starts from zero on each Record
+or Resume. No filter state spans an intentional pause. A start transient is expected; there is no added window,
+padding or delay trimming. Existing ADPCM final-tail discard is unchanged.
+
+`VoiceMemoConfig.h` sets `FILTER_ENABLED`. The supplied SOS coefficients are applied unchanged, with no
+separate gain multiplier. Output is rounded and saturated once to signed 16-bit PCM. Bypassing the filter
+preserves the captured PCM values. No automatic normalization or AGC is applied.
+The compiled preset rejects a different sample rate while enabled; redesign coefficients before changing it.
+
+The version-3 start journal additionally records a filter identifier and `gain_db`, with `gain` retained as the
+linear multiplier (1.0, with `gain_db` 0: no separate gain). A non-finite filter output stops with a processing error and preserves the current partial
+recording. Output peak/full-scale counters now belong to the writer. Logs include `max_filter_us` per input
+batch alongside existing encode, full-batch, buffer and stack diagnostics; capture performs no DSP or SD work.
+
+### Verification
+
+`bash test/voice_memo/run_host_tests.sh` runs the real float32 kernel with sanitizers and compares it with SciPy
+using the saved JSON coefficients. The comparison's pinned SciPy dependency is supplied by `uv run --script`;
+no notebook edits or notebook environment are required. Tests cover silence, impulses, full-scale DC, alternating
+extremes, deterministic noise, decay, segmented input, fresh-state Resume and rounding/saturation.
+
+On the host, maximum filter error against SciPy float64 was **0.487622 PCM units**, RMS **0.074197**, for the test
+signal. Float32 poles remain inside the unit circle. S3 GCC 14.2 at `-Os` emits `mul.s`/`madd.s`/`msub.s` hardware
+instructions for the kernel, with no helper calls; a loop probe has a 32-byte stack frame. These are numerical and
+compiler checks, not firmware CPU or battery measurements. S3 rounding can differ from the host.
+
+On PaperMono, compare bypass/filter with a repeatable speech/handling-noise source. Listen for
+lost consonants, ringing, start/resume transients and loud-input clipping. Record across rollover, Pause/Resume,
+Stop and exit, then verify the session and merge as before. Inspect processing/batch maxima, buffer high-water,
+DMA overflow, writer stack and heap; keep comfortable margin within each 1024-sample batch's 64 ms of audio.
+Timing on the real device remains open. Filtering still does not reduce fixed-rate ADPCM file size or guarantee
+better transcription, and it is not a prerequisite for future uploads.

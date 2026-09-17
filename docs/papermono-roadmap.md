@@ -13,7 +13,7 @@ This is the proposed order from discussion, not authorization to implement every
 
 | Next candidate | Small first increment | Dependencies / evidence still needed |
 | --- | --- | --- |
-| Desktop filtering comparison | Compare bypass against 4 kHz / 6 kHz low-pass on representative speech; optionally investigate low rumble separately | Preserve originals; listen at matched levels. Add firmware filtering only if useful. Existing clipped samples cannot be repaired. |
+| Device filter trial (implemented locally) | Try the owner-selected 150–4500 Hz elliptic SOS preset; compare filter/bypass without extra gain | Host numerical checks pass; measure processing/buffer/stack and listen on PaperMono. Existing clipped samples cannot be repaired. |
 | Upload one completed session | Send ADPCM chunks and JSONL with acknowledgment, retaining local originals | Agree endpoint/auth and duplicate-safe acknowledgment. Server may merge/decode; no on-device archive required. |
 | Durable upload queue | Persist pending work, retry failures and survive restarts, one upload at a time within Tools | Working upload first; define navigation/sleep lifetime and SD/radio coexistence. |
 | Plain server transcription | Produce a raw transcript from a memo | Keep audio and evaluate actual results. Meeting diarization is a separate experiment. |
@@ -166,7 +166,7 @@ Host tests/build success do not substitute for PaperMono validation. Capture a r
 
 ## Decisions to make only when needed
 
-- **Next recommendation:** desktop filtering comparison, then single-session upload; ADPCM and calculator are accepted for now. Keep pending device checks visible.
+- **Next recommendation:** validate the implemented filter trial, then single-session upload; ADPCM and calculator are accepted for now. Keep pending device checks visible.
 - **Before uploading:** choose the server/auth and define what acknowledgment means. Keep files until confirmed;
   handle the “server saved it but the reply was lost” case without duplicate submissions or silent deletion.
 - **Before background queue work:** define the Tools-area lifetime, explicit stop/pause behavior, reboot recovery,

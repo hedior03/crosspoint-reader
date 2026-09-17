@@ -255,9 +255,9 @@ retains ownership of its DMA buffers. The pool and queues are reused while pause
 The capture worker has priority 2, writer priority 1, both unpinned. Capture does no SD access or serial logging.
 The writer owns all audio files; main-task metadata/power cleanup happens only after workers acknowledge completion.
 
-Config: `src/activities/tools/VoiceMemoConfig.h`. Default 16 kHz mono16, 2x saturating gain, approximately five-minute ADPCM chunks,
+Config: `src/activities/tools/VoiceMemoConfig.h`. Default 16 kHz mono16, owner-selected four-section IIR, no separate gain, approximately five-minute ADPCM chunks,
 64 KiB PCM pool. Storage defaults to IMA ADPCM; PCM remains a compile-time baseline (see below).
-Gain amplifies air/rubbing noise too. Filtering, AGC and uploads are deferred.
+Filtering operates in the writer before int16 saturation; see [filter implementation and checks](papermono-audio-filters.md#implemented-owner-selected-trial). AGC and uploads remain deferred.
 
 Commands from the repository:
 
@@ -297,9 +297,9 @@ does not establish this new pipeline's reliability.
 Default storage is mono four-bit Microsoft IMA ADPCM WAV using the pinned
 [ADPCM-XQ library](../lib/AdpcmXq/README.md). `VoiceMemoConfig::FORMAT` selects `ImaAdpcm4` or `Pcm16`;
 `VOICE_MEMO_PCM_BASELINE` also selects PCM for comparison builds. There is no runtime selector or simultaneous
-dual recording. Capture remains 16-bit PCM at 16 kHz with the same 2x saturating gain before queueing.
-The existing writer assembles codec blocks, encodes and writes them through HalStorage. No additional task,
-filter, noise shaping or lookahead is enabled. ADPCM encoding is the compression step.
+dual recording. Capture queues raw 16-bit PCM at 16 kHz. The existing writer applies the selected IIR filter,
+then rounding/saturation, assembles codec blocks, encodes and writes through HalStorage. No additional task,
+noise shaping or lookahead is enabled. ADPCM encoding is the compression step.
 
 ### Blocks, samples and lifetime
 
@@ -394,7 +394,7 @@ Existing batch timing includes encoding and rollover. Each finalized chunk also 
 `max_encode_us` (encoding only); existing `writer_stack`, `capture_stack`, `buffer_high`, heap and clipping logs
 provide the rest. Verify stack headroom during the first block and queue margin during SD stalls before extending
 meeting use. No on-device throughput, power saving or subjective audio-quality claim is made by host tests.
-Filtering and the notebook remain separate later experiments.
+The owner-selected filter trial and its device checks are documented in the filtering notes; notebook files remain unchanged.
 
 Earlier padded implementation evidence (before block-aligned tails): both PaperMono PCM/ADPCM builds passed. S3 GCC 14.2 `-Os -fstack-usage`
 reports the patched encoder frame at 128 bytes (upstream 848); recursive search frames remain 160 bytes each.
