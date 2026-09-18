@@ -1,5 +1,14 @@
 # CrossPoint Reader
 
+## This PaperMono fork
+
+This fork adds personal PaperMono tools while preserving the reader. Start with the
+[PaperMono roadmap](docs/papermono-roadmap.md), [tools development guide](docs/papermono-tools-development.md),
+and [repository instructions](AGENTS.md). For changes to a tool, read its linked feature plan and verification
+criteria; implemented behavior, accepted limitations, and pending device checks are documented there.
+
+The upstream project overview follows.
+
 [![Fund contributors](https://img.shields.io/badge/%F0%9F%91%91_Fund_contributors-royalty.dev-BB953A?style=for-the-badge&labelColor=1a1a1a)](https://app.royalty.dev/crosspoint-reader/crosspoint-reader)
 
 CrossPoint is open-source e-reader firmware - community-built, fully hackable, free forever. It's maintained by a growing community of developers and readers who believe your device should do what you want - not what a manufacturer decided for you.

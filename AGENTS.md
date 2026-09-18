@@ -8,6 +8,12 @@ Mission: Provide a lightweight, high-performance reading experience focused on E
 Before planning or changing PaperMono tools, read [Building PaperMono tools](docs/papermono-tools-development.md).
 It provides decision-making principles, not a mandatory architecture or additional approval gate.
 
+Read the relevant feature plan and its referenced behavior/ownership documentation before editing. Before claiming
+completion, check its acceptance criteria against the integrated caller and lifecycle paths, not only isolated
+helpers. Passing tests and builds does not establish that the feature meets its plan: report unverified requirements
+and user-accepted limitations explicitly. Current user decisions take precedence over older plans; document accepted
+trade-offs without adding unrequested recovery machinery or claiming guarantees the implementation does not provide.
+
 ## AI Agent Identity and Cognitive Rules
 
 * Role: Senior Embedded Systems Engineer (ESP-IDF/Arduino-ESP32 specialized).

@@ -37,7 +37,17 @@ for durable data processing.
 
 Keep a small runnable check for non-trivial state transitions, boundaries, and recovery. Test the feature's
 observable behavior rather than mirroring every helper. Build the relevant firmware target after final code
-changes; distinguish host checks from device evidence.
+changes; distinguish host checks from device evidence. Check each relevant feature-plan acceptance criterion
+against the integrated caller and lifecycle flow before claiming completion. State what is covered by a runnable
+check, what still needs a device, and what the user has explicitly accepted as a limitation.
+
+For measurements, define what is counted, its units, who updates it, and when it is read/reset. Check peaks
+while the consumer is busy and state carried across interval, Pause/Resume, and finalization boundaries.
+Save the effective compiled experiment settings at session startup; distinguish capture-buffer sizes from codec
+framing. Test the saved output as well as helpers so that a passing test cannot conceal missing integration.
+
+Keep accepted trade-offs explicit. Documentation must describe the actual write/sync/close behavior and avoid
+stronger durability or latency claims. An accepted limitation is not an instruction to add a recovery framework.
 
 On PaperMono, check normal use, rapid/repeated input, idle feedback, errors, and exit/reader return. Measure
 latency or resource use before claiming improvement. A successful build does not prove timing or appearance.
