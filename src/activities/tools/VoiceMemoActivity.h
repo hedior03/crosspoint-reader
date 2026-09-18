@@ -8,6 +8,7 @@
 #include <memory>
 
 #include "VoiceMemoConfig.h"
+#include "VoiceMemoMetrics.h"
 #include "VoiceMemoSession.h"
 #include "activities/Activity.h"
 #include "components/UiAppHost.h"
@@ -37,12 +38,15 @@ class VoiceMemoActivity final : public Activity, private UiAppHost {
   void stopRecording(bool pause = false);
   void capture();
   void write();
+  void pollMetrics(bool final);
+  void sampleEnvironment();
   void finishWorkers();
   void releaseBuffers();
   void fail(Error reason);
   void buildScreen(UiScreen& screen);
   HalMicrophone mic;
   VoiceMemoSession session;
+  VoiceMemoMetrics telemetry;
   std::unique_ptr<Block[]> blocks;
   QueueHandle_t freeBlocks = nullptr;
   QueueHandle_t filledBlocks = nullptr;
@@ -63,5 +67,7 @@ class VoiceMemoActivity final : public Activity, private UiAppHost {
   uint32_t peak = 0;
   uint32_t highWater = 0;
   uint32_t displayedChunk = 0;
+  uint32_t nextEnvironmentMs = 0;
+  bool metricsLossReported = false;
 };
 #endif

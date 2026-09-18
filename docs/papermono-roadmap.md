@@ -9,8 +9,9 @@ without claiming the pending device measurements have been performed.
 
 ## Current next-step shortlist
 
-Immediate next increment: [persistent recorder metrics](papermono-recorder-metrics-plan.md)—one-second summaries,
-batched SD writes, using the local 24 kHz PCM trial to inform buffer and performance decisions. Not implemented yet.
+Recorder metrics are implemented locally: [persistent recorder metrics](papermono-recorder-metrics-plan.md) writes
+one-second RAM summaries to `metrics.csv` with batched SD writes. Host checks and both PaperMono builds pass;
+device measurements and the 32-versus-16-block comparison remain open.
 
 This is the proposed order from discussion, not authorization to implement every item. Filtering is not an upload prerequisite.
 

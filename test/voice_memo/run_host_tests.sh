@@ -9,6 +9,9 @@ c++ -std=c++20 -O2 -Wall -Wextra -Werror -fsanitize=address,undefined \
   test/voice_memo/FilterTest.cpp -o "$test_dir/filter"
 "$test_dir/filter" "$test_dir/input.f32" "$test_dir/output.f32"
 uv run --script test/voice_memo/check_filter.py "$test_dir/input.f32" "$test_dir/output.f32"
+c++ -std=c++20 -Wall -Wextra -Werror -fsanitize=address,undefined \
+  test/voice_memo/MetricsTest.cpp src/activities/tools/VoiceMemoMetrics.cpp -o "$test_dir/metrics"
+"$test_dir/metrics"
 for source in adpcm-lib adpcm-dns; do
   cc -std=c99 -fsanitize=address,undefined -c "lib/AdpcmXq/$source.c" -o "$test_dir/$source.o"
 done
@@ -21,6 +24,7 @@ for format in pcm adpcm; do
   c++ "${flags[@]}" -std=c++20 -Wall -Wextra -Werror -fsanitize=address,undefined \
     -Itest/voice_memo/stubs -Ilib/Memory -Ilib/AdpcmXq \
     test/voice_memo/SessionTest.cpp src/activities/tools/VoiceMemoSession.cpp \
+    src/activities/tools/VoiceMemoMetrics.cpp \
     "$test_dir/adpcm-lib.o" "$test_dir/adpcm-dns.o" -o "$test_dir/session"
   "$test_dir/session" "$test_dir/$format"
   .venv/bin/python test/voice_memo/check_wav.py "$test_dir/$format" --merge "$test_dir/$format.wav"

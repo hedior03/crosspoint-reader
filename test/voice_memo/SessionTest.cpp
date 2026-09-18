@@ -93,6 +93,8 @@ int main(int argc, char** argv) {
   assert(fake::files.at(chunkPath(session, 4, "wav")).size() == (ADPCM ? 316 : 44 + (CODEC_BLOCK_SAMPLES + 1) * 2));
   const auto& journal = fake::files.at(std::string(session.path()) + "/session.jsonl");
   const std::string text(journal.begin(), journal.end());
+  assert(text.find("\"block_samples\":" + std::to_string(BLOCK_SAMPLES)) != std::string::npos);
+  assert(text.find("\"buffer_blocks\":" + std::to_string(BUFFER_BLOCKS)) != std::string::npos);
   assert(text.find("\"event\":\"resume\"") != std::string::npos);
   assert(text.find("\"gap_ms\":1234") != std::string::npos);
   if (argc == 2) exportSession(argv[1]);
@@ -224,5 +226,69 @@ int main(int argc, char** argv) {
   VoiceMemoSession failedStart;
   fake::fault = "mkdir";
   assert(!failedStart.begin());
-  puts("Session checks passed: sample order, rollover, pause/resume, empty stop, unique paths and storage failures.");
+
+  // Diagnostics persist to their own file and are one-way: they never change audio results.
+  fake::reset();
+  VoiceMemoMetrics metrics;
+  VoiceMemoSession measured;
+  measured.setMetrics(&metrics);
+  assert(measured.begin());
+  assert(measured.openMetrics() && measured.metricsOpen());
+  metrics.startSession(0);
+  metrics.beginInterval(0);
+  metrics.noteSamples(CODEC_BLOCK_SAMPLES);
+  metrics.addWrite(1200);
+  const char* metricsRow = metrics.takeRow(1000000, false);
+  assert(metricsRow && measured.appendMetrics(metricsRow));
+  assert(measured.pendingMetricsRows() == 1);
+  assert(measured.event("pause"));
+  // Pause/Resume keeps the diagnostic file open and starts a fresh interval.
+  metrics.beginInterval(2000000);
+  metrics.noteSamples(CODEC_BLOCK_SAMPLES);
+  metrics.addWrite(1300);
+  metricsRow = metrics.takeRow(3000000, false);
+  assert(metricsRow && measured.appendMetrics(metricsRow));
+  assert(measured.pendingMetricsRows() == 2);
+  assert(measured.event("resume", 500));
+  feed(measured, CODEC_BLOCK_SAMPLES);
+  assert(measured.finishChunk(true) && measured.event("stop"));
+  assert(measured.flushMetrics());
+  assert(measured.closeMetrics());
+  const auto& metricsFile = fake::files.at(std::string(measured.path()) + "/metrics.csv");
+  const std::string csv(metricsFile.begin(), metricsFile.end());
+  assert(csv.rfind(VoiceMemoMetrics::csvHeader(), 0) == 0);
+  assert(csv.find("\n1000,1000,0," + std::to_string(CODEC_BLOCK_SAMPLES) + ",0,") != std::string::npos);
+  assert(csv.find("\n3000,1000,0," + std::to_string(CODEC_BLOCK_SAMPLES) + ",0,") != std::string::npos);
+
+  // A failing diagnostic write drops rows but leaves audio finalization intact.
+  fake::reset();
+  VoiceMemoSession diagFail;
+  assert(diagFail.begin() && diagFail.openMetrics());
+  const std::vector<int16_t> diagBlock(CODEC_BLOCK_SAMPLES, 1);
+  assert(diagFail.append(diagBlock.data(), diagBlock.size()));
+  assert(diagFail.appendMetrics("0,0,0,0,0\n"));
+  fake::fault = "write";
+  assert(!diagFail.flushMetrics());
+  assert(diagFail.metricsOpen());
+  assert(diagFail.append(diagBlock.data(), diagBlock.size()));
+  assert(diagFail.finishChunk(true) && diagFail.event("stop"));
+  assert(diagFail.closeMetrics());
+
+  // Overflow policy bounds buffered rows rather than growing without limit.
+  fake::reset();
+  VoiceMemoSession bounded;
+  assert(bounded.begin() && bounded.openMetrics());
+  for (int i = 0; i < 50; ++i) {
+    metrics.beginInterval(static_cast<uint64_t>(i) * 1000000);
+    metrics.noteSamples(100);
+    const char* line = metrics.takeRow(static_cast<uint64_t>(i) * 1000000 + 1000000, false);
+    assert(line);
+    (void)bounded.appendMetrics(line);
+  }
+  assert(bounded.pendingMetricsRows() > 0 && bounded.pendingMetricsRows() < 20);
+  assert(bounded.closeMetrics());
+
+  puts(
+      "Session checks passed: sample order, rollover, pause/resume, empty stop, unique paths, storage failures and "
+      "isolated diagnostics.");
 }

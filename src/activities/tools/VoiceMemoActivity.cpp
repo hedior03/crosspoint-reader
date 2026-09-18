@@ -1,5 +1,7 @@
 #include "VoiceMemoActivity.h"
 #if FREEINK_DEVICE_PAPERMONO
+#include <HalMemory.h>
+#include <HalPowerManager.h>
 #include <I18n.h>
 #include <Memory.h>
 #include <esp_memory_utils.h>
@@ -60,6 +62,7 @@ void VoiceMemoActivity::startRecording(bool resume) {
   captureDone = writerDone = true;
   peak = highWater = 0;
   clipped = 0;
+  session.setMetrics(&telemetry);
   if (!resume) {
     currentChunk = displayedChunk = 0;
     // One bounded pool per session, reused across pauses; too large for the task stack.
@@ -73,6 +76,7 @@ void VoiceMemoActivity::startRecording(bool resume) {
       fail(Error::StorageIo);
     } else {
       sessionActive = true;
+      if (!session.openMetrics()) LOG_ERR("MEMO", "Diagnostics unavailable; audio continues");
     }
   }
   if (error == Error::None) {
@@ -86,6 +90,11 @@ void VoiceMemoActivity::startRecording(bool resume) {
       fail(Error::Setup);
     } else {
       resumeGapMs = resume ? (esp_timer_get_time() - stoppedAt) / 1000 : 0;
+      if (!resume)
+        telemetry.startSession(esp_timer_get_time());
+      else
+        telemetry.beginInterval(esp_timer_get_time());
+      nextEnvironmentMs = millis();  // Sample power/memory once as soon as the loop runs.
       captureDone = writerDone = false;
       // Writer may block on SD; capture has higher priority and blocks only on audio/free buffers.
       if (xTaskCreate([](void* p) { static_cast<VoiceMemoActivity*>(p)->write(); }, "MemoWrite",
@@ -135,25 +144,28 @@ void VoiceMemoActivity::capture() {
       }
       break;
     }
+    highWater = std::max(highWater, uint32_t(telemetry.acquireBuffer()));
     auto& block = blocks[index];
     const int received = mic.read(block.samples, cfg::BLOCK_SAMPLES, cfg::READ_TIMEOUT_MS);
     if (received < 0 || mic.overflowed() || millis() - lastData > cfg::NO_AUDIO_TIMEOUT_MS) {
+      telemetry.releaseBuffer();
       xQueueSend(freeBlocks, &index, 0);
       fail(Error::Capture);
       break;
     }
     if (!received) {
+      telemetry.releaseBuffer();
       xQueueSend(freeBlocks, &index, 0);
       continue;
     }
     lastData = millis();
     block.count = received;
     if (xQueueSend(filledBlocks, &index, 0) != pdPASS) {
+      telemetry.releaseBuffer();
       xQueueSend(freeBlocks, &index, 0);
       fail(Error::BufferFull);
       break;
     }
-    highWater = std::max(highWater, uint32_t(cfg::BUFFER_BLOCKS - uxQueueMessagesWaiting(freeBlocks)));
   }
   if (mic.overflowed()) fail(Error::Capture);
   mic.stopCapture();
@@ -190,23 +202,31 @@ void VoiceMemoActivity::write() {
           peak = std::max(peak, uint32_t(value < 0 ? -value : value));
           if (value == -32768 || value == 32767) ++clipped;
         }
-        maxProcessingUs = std::max(maxProcessingUs, uint64_t(esp_timer_get_time() - started));
+        const uint64_t processing = esp_timer_get_time() - started;
+        maxProcessingUs = std::max(maxProcessingUs, processing);
+        telemetry.addFilter(processing);
+        telemetry.noteSamples(static_cast<uint32_t>(block.count));
         if (writable) {
           writable = session.append(block.samples, block.count);
           if (!writable) fail(Error::StorageIo);
         }
         const uint64_t elapsed = esp_timer_get_time() - started;
         maxBatchUs = std::max(maxBatchUs, elapsed);
+        telemetry.addBatch(elapsed);
         ++histogram[elapsed < 1000 ? 0 : elapsed < 10000 ? 1 : elapsed < 100000 ? 2 : elapsed < 1000000 ? 3 : 4];
         currentChunk = session.chunk();
         if (previousChunk != session.chunk())
           LOG_INF("MEMO", "chunk=%lu rollover_batch_us=%llu queued=%u", static_cast<unsigned long>(session.chunk()),
                   static_cast<unsigned long long>(elapsed), unsigned(uxQueueMessagesWaiting(filledBlocks)));
       }
+      telemetry.releaseBuffer();
       xQueueSend(freeBlocks, &index, 0);
     }
+    pollMetrics(false);
     if (captureDone.load() && uxQueueMessagesWaiting(filledBlocks) == 0) break;
   }
+  pollMetrics(true);
+  session.flushMetrics();
   const auto started = esp_timer_get_time();
   if (!session.finishChunk(error == Error::None)) fail(Error::StorageIo);
   const uint64_t finalizeUs = esp_timer_get_time() - started;
@@ -218,6 +238,37 @@ void VoiceMemoActivity::write() {
           static_cast<unsigned long>(histogram[4]), uxTaskGetStackHighWaterMark(nullptr));
   writerDone.store(true);
   vTaskSuspend(nullptr);
+}
+
+void VoiceMemoActivity::pollMetrics(bool final) {
+  const char* row = telemetry.takeRow(esp_timer_get_time(), final);
+  if (!row || !session.metricsOpen()) return;
+  if (!session.appendMetrics(row) && !metricsLossReported) {
+    LOG_ERR("MEMO", "Telemetry rows dropped; audio unaffected");
+    metricsLossReported = true;
+  }
+  if (session.pendingMetricsRows() >= VoiceMemoMetricsConfig::BATCH_ROWS && uxQueueMessagesWaiting(filledBlocks) == 0) {
+    session.flushMetrics();
+  }
+}
+
+void VoiceMemoActivity::sampleEnvironment() {
+  auto& environment = telemetry.environment();
+  const auto battery = powerManager.getBatteryStatus();
+  environment.batteryMv.store(battery.millivoltsKnown ? static_cast<int32_t>(battery.millivolts) : -1);
+  environment.batteryPct.store(battery.percentageKnown ? static_cast<int32_t>(battery.percentage) : -1);
+  environment.externalPower.store(battery.externalPowerKnown ? (battery.externalPower ? 1 : 0) : -1);
+  const auto internal = HalMemory::getInternalHeap();
+  const auto psram = HalMemory::getPsramHeap();
+  environment.internalFree.store(static_cast<int32_t>(std::min<size_t>(internal.freeBytes, INT32_MAX)));
+  environment.internalMin.store(static_cast<int32_t>(std::min<size_t>(internal.minFreeBytes, INT32_MAX)));
+  environment.internalLargest.store(static_cast<int32_t>(std::min<size_t>(internal.largestBlockBytes, INT32_MAX)));
+  environment.psramFree.store(psram.totalBytes ? static_cast<int32_t>(std::min<size_t>(psram.freeBytes, INT32_MAX))
+                                               : -1);
+  environment.psramMin.store(psram.totalBytes ? static_cast<int32_t>(std::min<size_t>(psram.minFreeBytes, INT32_MAX))
+                                              : -1);
+  environment.writerStackFree.store(writerTask ? static_cast<int32_t>(uxTaskGetStackHighWaterMark(writerTask)) : -1);
+  environment.captureStackFree.store(captureTask ? static_cast<int32_t>(uxTaskGetStackHighWaterMark(captureTask)) : -1);
 }
 
 void VoiceMemoActivity::finishWorkers() {
@@ -247,6 +298,7 @@ void VoiceMemoActivity::finishWorkers() {
     status = pauseRequested ? Status::Paused : Status::Saved;
   }
   if (status != Status::Paused) {
+    session.closeMetrics();
     sessionActive = false;
     releaseBuffers();
   }
@@ -261,6 +313,10 @@ void VoiceMemoActivity::onExit() {
 }
 
 void VoiceMemoActivity::loop() {
+  if ((captureTask || writerTask) && int32_t(millis() - nextEnvironmentMs) >= 0) {
+    sampleEnvironment();
+    nextEnvironmentMs = millis() + VoiceMemoMetricsConfig::ENVIRONMENT_INTERVAL_MS;
+  }
   if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
     pauseRequested = false;
     stop = true;

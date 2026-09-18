@@ -45,6 +45,18 @@ class HalPowerManager {
   // Get battery percentage (range 0-100)
   uint16_t getBatteryPercentage() const;
 
+  // Minimal raw snapshot for diagnostics; the Known flags distinguish a valid zero from
+  // unavailable telemetry. Do not use this for the status bar.
+  struct BatteryStatus {
+    bool millivoltsKnown = false;
+    uint16_t millivolts = 0;
+    bool percentageKnown = false;
+    uint16_t percentage = 0;
+    bool externalPowerKnown = false;
+    bool externalPower = false;
+  };
+  BatteryStatus getBatteryStatus() const;
+
   // RAII helper class to manage power saving locks
   // Usage: create an instance of Lock in a scope to disable power saving, for example when running a task that needs
   // full performance. When the Lock instance is destroyed (goes out of scope), power saving will be re-enabled.

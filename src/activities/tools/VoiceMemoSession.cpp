@@ -11,6 +11,29 @@
 #include "VoiceMemoConfig.h"
 #include "VoiceMemoWav.h"
 
+#ifndef CROSSPOINT_VERSION
+#define CROSSPOINT_VERSION "unknown"
+#endif
+
+namespace {
+// Times chunk open/close/rename/finalize transitions into the rollover counter.
+struct RolloverTimer {
+  VoiceMemoMetrics* metrics;
+  int64_t started = esp_timer_get_time();
+  explicit RolloverTimer(VoiceMemoMetrics* sink) : metrics(sink) {}
+  ~RolloverTimer() {
+    if (metrics) metrics->addRollover(esp_timer_get_time() - started);
+  }
+};
+}  // namespace
+
+bool VoiceMemoSession::writeAudio(const void* data, size_t bytes) {
+  const auto started = esp_timer_get_time();
+  const size_t written = file.write(static_cast<const uint8_t*>(data), bytes);
+  if (metrics_) metrics_->addWrite(esp_timer_get_time() - started);
+  return written == bytes;
+}
+
 bool VoiceMemoSession::journal(const char* line) {
   char path[64];
   snprintf(path, sizeof(path), "%s/session.jsonl", directory);
@@ -30,6 +53,9 @@ bool VoiceMemoSession::journal(const char* line) {
 bool VoiceMemoSession::begin() {
   directory[0] = '\0';
   releaseEncoder();
+  closeMetrics();
+  metricsUsed = metricsPendingRows = metricsDropped = 0;
+  metricsFailureLogged = false;
   LOG_INF("MEMO", "Pause/Stop tail discard limit: %u samples (%.3f ms)",
           unsigned(VoiceMemoConfig::ADPCM ? VoiceMemoConfig::CODEC_BLOCK_SAMPLES - 1 : 0),
           VoiceMemoConfig::ADPCM ? 1000.0 * (VoiceMemoConfig::CODEC_BLOCK_SAMPLES - 1) / VoiceMemoConfig::SAMPLE_RATE
@@ -59,16 +85,22 @@ bool VoiceMemoSession::begin() {
       LOG_ERR("MEMO", "Cannot create session directory");
       return false;
     }
-    char line[224];
-    snprintf(line, sizeof(line),
-             "{\"version\":3,\"event\":\"start\",\"sample_rate\":%lu,\"bits\":16,\"channels\":1,\"gain\":%.9g,"
-             "\"format\":\"%s\",\"block_bytes\":%u,\"samples_per_block\":%u,\"filter\":\"%s\",\"gain_db\":%g}\n",
-             static_cast<unsigned long>(VoiceMemoConfig::SAMPLE_RATE), 1.0,
-             VoiceMemoConfig::ADPCM ? "ima_adpcm4" : "pcm16",
-             VoiceMemoConfig::ADPCM ? VoiceMemoConfig::CODEC_BLOCK_BYTES : 2u,
-             VoiceMemoConfig::ADPCM ? VoiceMemoConfig::CODEC_BLOCK_SAMPLES : 1u,
-             VoiceMemoConfig::FILTER_ENABLED ? "ellip_hp150_lp4500_v1" : "none", 0.0);
-    return journal(line);
+    // Reuse the diagnostic buffer before rows exist; keep startup metadata off the task stack.
+    const int length = snprintf(
+        metricsBuffer, sizeof(metricsBuffer),
+        "{\"version\":3,\"event\":\"start\",\"sample_rate\":%lu,\"bits\":16,\"channels\":1,\"gain\":%.9g,"
+        "\"format\":\"%s\",\"block_bytes\":%u,\"samples_per_block\":%u,\"filter\":\"%s\",\"gain_db\":%g,"
+        "\"firmware\":\"%s\",\"block_samples\":%u,\"buffer_blocks\":%u}\n",
+        static_cast<unsigned long>(VoiceMemoConfig::SAMPLE_RATE), 1.0, VoiceMemoConfig::ADPCM ? "ima_adpcm4" : "pcm16",
+        VoiceMemoConfig::ADPCM ? VoiceMemoConfig::CODEC_BLOCK_BYTES : 2u,
+        VoiceMemoConfig::ADPCM ? VoiceMemoConfig::CODEC_BLOCK_SAMPLES : 1u,
+        VoiceMemoConfig::FILTER_ENABLED ? "ellip_hp150_lp4500_v1" : "none", 0.0, CROSSPOINT_VERSION,
+        unsigned(VoiceMemoConfig::BLOCK_SAMPLES), unsigned(VoiceMemoConfig::BUFFER_BLOCKS));
+    if (length < 0 || static_cast<size_t>(length) >= sizeof(metricsBuffer)) {
+      LOG_ERR("MEMO", "Session metadata exceeds buffer");
+      return false;
+    }
+    return journal(metricsBuffer);
   }
   LOG_ERR("MEMO", "Session identifiers exhausted");
   directory[0] = '\0';
@@ -76,6 +108,7 @@ bool VoiceMemoSession::begin() {
 }
 
 bool VoiceMemoSession::openChunk() {
+  RolloverTimer rollover(metrics_);
   if (chunkNumber == 999999) {
     LOG_ERR("MEMO", "Chunk identifiers exhausted");
     return false;
@@ -96,7 +129,7 @@ bool VoiceMemoSession::openChunk() {
     return false;
   }
   const auto header = voiceMemoWavHeader(0);
-  if (file.write(header.data(), header.size()) != header.size()) {
+  if (!writeAudio(header.data(), header.size())) {
     writeFailed = true;
     LOG_ERR("MEMO", "Cannot reserve WAV header");
     return false;
@@ -126,7 +159,8 @@ bool VoiceMemoSession::writeCodecBlock() {
   const uint64_t elapsed = esp_timer_get_time() - started;
   encodeUs += elapsed;
   maxEncodeUs = std::max(maxEncodeUs, elapsed);
-  if (!encoded || bytes != VoiceMemoConfig::CODEC_BLOCK_BYTES || file.write(encoder->encoded, bytes) != bytes) {
+  if (metrics_) metrics_->addEncode(elapsed);
+  if (!encoded || bytes != VoiceMemoConfig::CODEC_BLOCK_BYTES || !writeAudio(encoder->encoded, bytes)) {
     LOG_ERR("MEMO", "ADPCM encoding/write failed; retaining partial chunk");
     writeFailed = true;
     return false;
@@ -141,7 +175,7 @@ bool VoiceMemoSession::writeCodecBlock() {
 bool VoiceMemoSession::writeSamples(const int16_t* samples, size_t count) {
   if constexpr (!VoiceMemoConfig::ADPCM) {
     const size_t bytes = count * sizeof(int16_t);
-    if (file.write(reinterpret_cast<const uint8_t*>(samples), bytes) != bytes) {
+    if (!writeAudio(samples, bytes)) {
       LOG_ERR("MEMO", "Short SD write; retaining partial chunk");
       writeFailed = true;
       return false;
@@ -181,8 +215,9 @@ bool VoiceMemoSession::finishChunk(bool complete) {
 
 bool VoiceMemoSession::closeChunk(bool complete) {
   if (!file) return true;
+  RolloverTimer rollover(metrics_);
   const auto header = voiceMemoWavHeader(dataBytes, chunkSamples);
-  const bool headerOk = file.seek(0) && file.write(header.data(), header.size()) == header.size();
+  const bool headerOk = file.seek(0) && writeAudio(header.data(), header.size());
   file.flush();
   const bool closed = file.close();
   if (!headerOk || !closed) {
@@ -215,4 +250,77 @@ bool VoiceMemoSession::event(const char* name, uint64_t gapMs) {
   snprintf(line, sizeof(line), "{\"event\":\"%s\",\"sample\":%llu,\"gap_ms\":%llu}\n", name,
            static_cast<unsigned long long>(totalSamples), static_cast<unsigned long long>(gapMs));
   return journal(line);
+}
+
+bool VoiceMemoSession::openMetrics() {
+  if (!directory[0]) return false;
+  char path[64];
+  snprintf(path, sizeof(path), "%s/metrics.csv", directory);
+  metricsFile = Storage.open(path, O_WRONLY | O_CREAT | O_EXCL);
+  if (!metricsFile) {
+    LOG_ERR("MEMO", "Cannot open metrics.csv");
+    return false;
+  }
+  const char* header = VoiceMemoMetrics::csvHeader();
+  const size_t length = strlen(header);
+  const auto started = esp_timer_get_time();
+  const size_t written = metricsFile.write(reinterpret_cast<const uint8_t*>(header), length);
+  if (metrics_) metrics_->addDiag(esp_timer_get_time() - started);
+  if (written != length) {
+    LOG_ERR("MEMO", "Cannot write metrics.csv header");
+    metricsFile.close();
+    return false;
+  }
+  metricsUsed = metricsPendingRows = 0;
+  metricsFailureLogged = false;
+  metricsOpen_ = true;
+  return true;
+}
+
+bool VoiceMemoSession::appendMetrics(const char* row) {
+  if (!metricsOpen_) return false;
+  const size_t length = strlen(row);
+  if (length == 0 || length + 1 > VoiceMemoMetricsConfig::ROW_MAX) {
+    ++metricsDropped;
+    return false;
+  }
+  // Buffer-full is the overflow policy: attempt one bounded flush, otherwise drop the row.
+  if (metricsUsed + length > VoiceMemoMetricsConfig::BATCH_BYTES && !flushMetrics()) {
+    ++metricsDropped;
+    return false;
+  }
+  memcpy(metricsBuffer + metricsUsed, row, length);
+  metricsUsed += length;
+  ++metricsPendingRows;
+  return true;
+}
+
+bool VoiceMemoSession::flushMetrics() {
+  if (!metricsUsed) return true;
+  if (!metricsOpen_) {
+    metricsDropped += metricsPendingRows;
+    metricsUsed = metricsPendingRows = 0;
+    return false;
+  }
+  const auto started = esp_timer_get_time();
+  const size_t written = metricsFile.write(reinterpret_cast<const uint8_t*>(metricsBuffer), metricsUsed);
+  if (metrics_) metrics_->addDiag(esp_timer_get_time() - started);
+  const bool ok = written == metricsUsed;
+  if (!ok) {
+    metricsDropped += metricsPendingRows;
+    if (!metricsFailureLogged) {
+      LOG_ERR("MEMO", "metrics.csv write failed; telemetry incomplete");
+      metricsFailureLogged = true;
+    }
+  }
+  metricsUsed = metricsPendingRows = 0;
+  return ok;
+}
+
+bool VoiceMemoSession::closeMetrics() {
+  if (!metricsOpen_) return true;
+  const bool flushed = flushMetrics();
+  const bool closed = metricsFile.close();
+  metricsOpen_ = false;
+  return flushed && closed;
 }

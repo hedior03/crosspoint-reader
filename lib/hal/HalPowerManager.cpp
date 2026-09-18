@@ -133,6 +133,19 @@ void HalPowerManager::startDeepSleep(HalGPIO& gpio) const {
   freeink::PowerManager::deepSleepUntilPowerButton();
 }
 
+HalPowerManager::BatteryStatus HalPowerManager::getBatteryStatus() const {
+  static const BatteryMonitor battery;
+  const auto status = battery.readStatus();
+  BatteryStatus snapshot;
+  snapshot.millivoltsKnown = status.millivoltsKnown;
+  snapshot.millivolts = status.millivolts;
+  snapshot.percentageKnown = status.percentageKnown;
+  snapshot.percentage = status.percentage;
+  snapshot.externalPowerKnown = status.externalPowerKnown;
+  snapshot.externalPower = status.externalPower;
+  return snapshot;
+}
+
 uint16_t HalPowerManager::getBatteryPercentage() const {
   static const BatteryMonitor battery;
   if (BoardConfig::ACTIVE.batteryGauge.gaugeAddr != 0) {

@@ -417,9 +417,10 @@ additional gain, produced 81,212 bytes versus 320,044 bytes PCM (74.6% smaller).
 returned exactly 160,000 samples. Sample-aligned SNR was 27.89 dB with peak absolute sample error 5,953;
 these numerical results do not establish perceived speech quality. The source recording was preserved.
 
-## Next increment: persistent recorder measurements
+## Recorder measurements
 
-See the [recorder metrics implementation handoff](papermono-recorder-metrics-plan.md). The agreed direction is
-one-second RAM summaries with batched SD persistence, preserving the existing two workers and audio priority.
-The local experiment is 24 kHz unfiltered PCM with 1024 samples × 32 buffers; shared defaults stay at 16 kHz
-filtered ADPCM. Logging implementation and device measurements are still pending.
+See the [recorder metrics implementation handoff](papermono-recorder-metrics-plan.md). One-second RAM
+summaries are written to `metrics.csv` in each session with batched SD persistence, preserving the existing
+two workers and audio priority. Host checks and both PaperMono builds pass; the local experiment is 24 kHz
+unfiltered PCM with 1024 samples × 32 buffers, and shared defaults stay at 16 kHz filtered ADPCM. Column,
+unit and flushing details plus the remaining device checks are in the handoff.

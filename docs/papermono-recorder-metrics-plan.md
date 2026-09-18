@@ -1,6 +1,7 @@
 # PaperMono recorder metrics: implementation handoff
 
-Status: scoped, not implemented. Updated 2026-09-17.
+Status: implemented locally. Host checks pass and both PaperMono builds succeed (local 24 kHz PCM and shared 16 kHz
+filtered ADPCM). Device measurements remain. Updated 2026-09-17.
 
 ## Goal and agreed decisions
 
@@ -49,8 +50,8 @@ no_audio_timeout_ms = 2000
 
 At 24 kHz this PCM pool holds at most 1.365 seconds / 64 KiB of audio (excluding bookkeeping).
 One full capture block represents 42.667 ms. These are capacities, not timers or guaranteed stall tolerance.
-The local 24 kHz flags were resolved and checked with C++ static assertions, but this final configuration
-has not yet been firmware-built or device-tested. The earlier 32 kHz PCM configuration built successfully.
+The local 24 kHz flags were resolved and checked with C++ static assertions, and this configuration now builds
+locally (device testing remains). The earlier 32 kHz PCM configuration also built successfully.
 
 Capture feeds a bounded pool through index queues. The writer consumes immediately and writes PCM batches
 or full ADPCM blocks; it does not wait for the pool to fill. Filtering is per sample and needs only SOS state.
@@ -93,7 +94,8 @@ cancellation deadline. Do not describe buffer duration as a hard I/O timeout or 
    the main task/HAL rather than capture. Record unavailable readings as unknown, not zero. Sample memory/stack
    at a modest cadence; distinguish internal RAM from PSRAM. Do not add cross-task data races or read deleted tasks.
 6. Document columns, units, histogram boundaries, flushing policy and known measurement limitations. Include
-   enough configuration metadata to compare sessions: rate, format, filter, block sizes and firmware identity.
+   enough configuration metadata to compare sessions: rate, format, filter, capture block samples and pool block
+   count, codec framing and firmware identity. Record these once in the session start entry.
 
 The histogram provides approximate p90/p99 ranges, not exact percentiles. Count + total gives a mean;
 maximum and occupancy expose dangerous stalls. Variance and full event traces are deferred.
@@ -108,7 +110,8 @@ versus disabled runs; logging is not free. Do not extend the audio journal with 
 
 ## Verification and done criteria
 
-- Focused host checks: interval accumulation/reset, histogram edges, delayed intervals, bounded telemetry overflow,
+- Focused host checks: held-block peaks across busy-writer and interval boundaries, startup capture configuration,
+  interval accumulation/reset, histogram edges, delayed intervals, bounded telemetry overflow,
   final partial report, Pause/Resume lifecycle and diagnostic I/O failure distinct from audio failure.
 - Preserve recorder host tests, exact sample counts, chunk rollover and legacy PCM/ADPCM merge behavior.
 - Build local 24 kHz unfiltered PCM and shared 16 kHz filtered ADPCM without overwriting the user's local settings.
@@ -122,3 +125,79 @@ versus disabled runs; logging is not free. Do not extend the audio journal with 
 
 After this evidence, compare 32 versus 16 capture blocks at 24 kHz. Choose capacity from worst observed backlog
 plus margin, not average SD speed. No finite buffer fixes sustained writer throughput below capture throughput.
+
+## Implemented format
+
+`metrics.csv` lives beside `session.jsonl` in every new session directory. Configuration needed to compare
+sessions stays in the version-3 `session.jsonl` start event: `sample_rate`, `format`, `filter`, `block_bytes`,
+`samples_per_block`, `gain_db`, `firmware`, `block_samples` and `buffer_blocks`.
+`block_samples` and `buffer_blocks` are the effective compiled capture-pool settings; `block_bytes` and
+`samples_per_block` describe codec framing, not capture buffering. There is no separate telemetry
+framework, task or queue: the existing writer task folds its own timings, formats a row, and appends it to a
+bounded buffer that is flushed through HalStorage.
+
+Columns (63, comma separated, one header row written once):
+
+- `t_ms` — milliseconds since session start (monotonic `esp_timer`, not wall clock).
+- `elapsed_ms` — actual duration covered by this row.
+- `missed` — whole scheduled intervals not separately reported because the writer was delayed.
+- `samples` — captured samples folded into the interval.
+- `buffer_high` — maximum blocks held by capture/queues/writer during the interval (0..`BUFFER_BLOCKS`).
+  Capture increments ownership immediately after taking a free block. Capture's unused/error returns and the
+  writer's processed/error-drain returns decrement ownership before returning the index to the free queue.
+  One atomic word holds current occupancy and its peak; reporting resets only the peak to current occupancy.
+  This preserves peaks while the writer is busy and includes blocks held across interval boundaries. Each
+  Record/Resume initializes the interval before starting workers; timing counters remain writer-owned.
+- Six timing counters, each `n` (events), `us` (total), `max_us` (maximum) and `b0..b4` (buckets):
+  `filter` per-block filter/convert, `encode` ADPCM block encodes, `write` audio SD writes (including the
+  HalStorage mutex wait), `batch` whole writer batches (filter + encode + write + rollover),
+  `rollover` chunk open/close/rename/finalize transitions, `diag` `metrics.csv` writes.
+- Buckets are `<1ms`, `<10ms`, `<100ms`, `<1s`, `>=1s`. They give approximate p90/p99 ranges and occupancy,
+  not exact percentiles. Count plus total gives a mean.
+- `battery_mv`, `battery_pct`, `external_power` (0/1), sampled on the main task every
+  `ENVIRONMENT_INTERVAL_MS` (45 s) through `HalPowerManager::getBatteryStatus`.
+- `heap_internal_free`, `heap_internal_min`, `heap_internal_largest`, `psram_free`, `psram_min` in bytes,
+  internal RAM and PSRAM separately (PSRAM unavailable is empty).
+- `writer_stack_free`, `capture_stack_free` — FreeRTOS stack high-water marks in bytes; smaller means less
+  headroom. Sampled with the environment.
+- An empty field means unknown/unavailable, never zero.
+
+Flushing policy: rows are appended to a fixed `BATCH_BYTES` (2048) buffer. The writer flushes at
+`BATCH_ROWS` (4) rows when the filled-block queue is empty, at Pause/Stop drain, and when a row would
+overflow the buffer. A failed flush drops the buffered rows, is logged once, and never changes the audio
+result. Here “flush” means writing the RAM batch through HalFile, not calling `HalFile::flush()` to sync
+filesystem state. Pause writes pending rows but keeps the handle open; Stop/exit closes it. Power loss before
+close can lose access to the session's metrics, not just the latest RAM batch. `metrics.csv` is opened with
+`O_EXCL`; an existing session is never overwritten.
+
+### Accepted trade-offs and remaining gaps
+
+The owner accepted the current overflow-write policy, lack of periodic filesystem synchronization, and
+best-effort diagnostic error handling for this increment. A full metrics buffer can trigger an SD write even
+with audio queued; neither small writes nor bounded RAM imply bounded SD latency. A short diagnostic write
+can leave a partial CSV row, and subsequent appends can join onto it. Recovery for these cases is out of scope.
+
+Two review gaps remain unchanged: the final report precedes chunk finalization, so final close/header/rename
+and last diagnostic-write timings are omitted; dropped-row counts are not exported (the `missed` column only
+counts delayed intervals). Serial can report diagnostic failure, but the saved CSV alone does not provide a
+complete loss count. These limitations qualify the original acceptance criteria above; do not report them as
+verified behavior.
+
+Known limitations: elapsed filter/encode time includes task preemption, so it is not CPU utilization.
+`write` covers audio writes only; `diag` shows the diagnostic write cost separately. Battery voltage trends
+are not precise mAh/Wh and no current measurement exists. The first row of a segment starts at Resume, so a
+pause gap is not reported as an interval. Histograms are ranges, and there is no variance or event trace.
+
+## Device checks remaining
+
+Build and host checks do not exercise FreeRTOS scheduling, real SD stalls or I2S. On PaperMono, record across
+several rollovers and Pause/Resume/Stop/exit, then copy the whole session and confirm:
+
+- `metrics.csv` loads directly on the desktop and its row count roughly matches recorded seconds.
+- `buffer_high` stays well below `BUFFER_BLOCKS`; `write` and `rollover` maxima show plausible stalls.
+- Zero audio overflow and correct WAVs (existing checker) with listening across boundaries.
+- `heap_internal_*`, `psram_*` and stack columns show headroom; compare a logging-enabled and a
+  logging-disabled build under identical conditions to measure the diagnostic cost.
+- Slow-storage/backlog behavior shows missed intervals in `missed` rather than stalled capture.
+- Battery runs record `external_power` and use consistent frontlight/radio conditions; unplugged runs give
+  discharge trends.
