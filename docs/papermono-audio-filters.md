@@ -109,6 +109,11 @@ The owner-supplied coefficients are preserved in [voice-ellip-150-4500.json](aud
 0.5 dB ripple and 40 dB stopband attenuation. Coefficients are used in the supplied order and rounded to float32.
 They are not redesigned from the descriptive cutoff settings at runtime.
 
+The additional owner-supplied [24 kHz preset](audio-presets/voice-owner-24000.json) is selected when
+`SAMPLE_RATE` is 24000 and filtering is enabled. Its supplied SOS values and order are preserved, with no
+extra gain. Its journal identifier is `owner_sos_24000_v1`; the existing 16 kHz identifier stays unchanged.
+Only its design sample rate was supplied, so no cutoff/family metadata is inferred for this preset.
+
 `VoiceMemoFilter.h` uses transposed direct form II, the standard structure used by SciPy `sosfilt`. Each section
 requires five multiplications, four additions/subtractions and two state floats per input sample. Four sections
 therefore need 32 bytes of state; 24 float coefficients occupy 96 bytes of read-only data. There is no allocation,
@@ -130,7 +135,8 @@ padding or delay trimming. Existing ADPCM final-tail discard is unchanged.
 `VoiceMemoConfig.h` sets `FILTER_ENABLED`. The supplied SOS coefficients are applied unchanged, with no
 separate gain multiplier. Output is rounded and saturated once to signed 16-bit PCM. Bypassing the filter
 preserves the captured PCM values. No automatic normalization or AGC is applied.
-The compiled preset rejects a different sample rate while enabled; redesign coefficients before changing it.
+Filtering supports 16 and 24 kHz; other enabled-filter rates are rejected at compile time. Bypass remains
+available at the supported recorder rates. The local 24 kHz unfiltered configuration is unchanged.
 
 The version-3 start journal additionally records a filter identifier and `gain_db`, with `gain` retained as the
 linear multiplier (1.0, with `gain_db` 0: no separate gain). A non-finite filter output stops with a processing error and preserves the current partial
@@ -140,18 +146,19 @@ batch alongside existing encode, full-batch, buffer and stack diagnostics; captu
 ### Verification
 
 `bash test/voice_memo/run_host_tests.sh` runs the real float32 kernel with sanitizers and compares it with SciPy
-using the saved JSON coefficients. The comparison's pinned SciPy dependency is supplied by `uv run --script`;
+at both 16 and 24 kHz using their saved JSON coefficients. The comparison's pinned SciPy dependency is supplied by `uv run --script`;
 no notebook edits or notebook environment are required. Tests cover silence, impulses, full-scale DC, alternating
 extremes, deterministic noise, decay, segmented input, fresh-state Resume and rounding/saturation.
 
-On the host, maximum filter error against SciPy float64 was **0.487622 PCM units**, RMS **0.074197**, for the test
-signal. Float32 poles remain inside the unit circle. S3 GCC 14.2 at `-Os` emits `mul.s`/`madd.s`/`msub.s` hardware
+For the 16 kHz preset, maximum host filter error against SciPy float64 was **0.487622 PCM units**, RMS **0.074197**, for the test
+signal. For the 24 kHz preset, maximum error was **1.304807 PCM units**, RMS **0.259568** on the same
+test sequence. Both presets pass the existing 2-unit maximum-error limit; float32 poles remain inside the unit circle. S3 GCC 14.2 at `-Os` emits `mul.s`/`madd.s`/`msub.s` hardware
 instructions for the kernel, with no helper calls; a loop probe has a 32-byte stack frame. These are numerical and
 compiler checks, not firmware CPU or battery measurements. S3 rounding can differ from the host.
 
 On PaperMono, compare bypass/filter with a repeatable speech/handling-noise source. Listen for
 lost consonants, ringing, start/resume transients and loud-input clipping. Record across rollover, Pause/Resume,
 Stop and exit, then verify the session and merge as before. Inspect processing/batch maxima, buffer high-water,
-DMA overflow, writer stack and heap; keep comfortable margin within each 1024-sample batch's 64 ms of audio.
+DMA overflow, writer stack and heap; each 1024-sample batch covers 64 ms at 16 kHz or 42.667 ms at 24 kHz.
 Timing on the real device remains open. Filtering still does not reduce fixed-rate ADPCM file size or guarantee
 better transcription, and it is not a prerequisite for future uploads.

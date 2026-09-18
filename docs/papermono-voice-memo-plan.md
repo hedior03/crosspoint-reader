@@ -270,7 +270,7 @@ In gitignored `platformio.local.ini`, a `[voice_memo]` section can hold readable
 `sample_rate = 32000`, mapped into `[env:papermono]` build flags with
 `-DVOICE_MEMO_SAMPLE_RATE=${voice_memo.sample_rate}`. Preserve all existing PaperMono build flags when
 overriding that list. Changes require rebuilding and uploading; the device does not read this INI file.
-Disable filtering for rates other than 16 kHz until matching coefficients are supplied. Higher-rate PCM
+Filtering selects the supplied 16 or 24 kHz preset; disable it at other rates until matching coefficients are supplied. Higher-rate PCM
 is a device experiment, not a guarantee of improved microphone quality or recording reliability.
 
 Commands from the repository:

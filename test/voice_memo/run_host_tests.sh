@@ -5,10 +5,14 @@ test_dir=$(mktemp -d)
 trap 'rm -rf "$test_dir"' EXIT
 c++ -DVOICE_MEMO_PCM_BASELINE -std=c++20 -Wall -Wextra -Werror -fsanitize=address,undefined test/voice_memo/WavTest.cpp -o "$test_dir/wav"
 "$test_dir/wav"
-c++ -std=c++20 -O2 -Wall -Wextra -Werror -fsanitize=address,undefined \
-  test/voice_memo/FilterTest.cpp -o "$test_dir/filter"
-"$test_dir/filter" "$test_dir/input.f32" "$test_dir/output.f32"
-uv run --script test/voice_memo/check_filter.py "$test_dir/input.f32" "$test_dir/output.f32"
+for rate in 16000 24000; do
+  preset=docs/audio-presets/voice-ellip-150-4500.json
+  if [[ "$rate" == 24000 ]]; then preset=docs/audio-presets/voice-owner-24000.json; fi
+  c++ -DVOICE_MEMO_SAMPLE_RATE="$rate" -std=c++20 -O2 -Wall -Wextra -Werror -fsanitize=address,undefined \
+    test/voice_memo/FilterTest.cpp -o "$test_dir/filter"
+  "$test_dir/filter" "$test_dir/input.f32" "$test_dir/output.f32"
+  uv run --script test/voice_memo/check_filter.py "$test_dir/input.f32" "$test_dir/output.f32" "$preset"
+done
 c++ -std=c++20 -Wall -Wextra -Werror -fsanitize=address,undefined \
   test/voice_memo/MetricsTest.cpp src/activities/tools/VoiceMemoMetrics.cpp -o "$test_dir/metrics"
 "$test_dir/metrics"

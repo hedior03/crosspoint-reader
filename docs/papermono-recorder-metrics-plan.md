@@ -33,7 +33,8 @@ The user opted out of GitButler. Follow AGENTS.md, use `rtk`, prefer `uv`, and u
 ## Current configuration and behavior
 
 Shared C++ defaults: 16 kHz mono16, IMA ADPCM, selected 150–4500 Hz filter enabled, **no separate gain**.
-The supplied SOS coefficients must remain unchanged. They are designed for 16 kHz only.
+The supplied SOS coefficients remain unchanged: the original preset is for 16 kHz; the additional
+[24 kHz preset](audio-presets/voice-owner-24000.json) is selected for filtered 24 kHz builds.
 
 The gitignored `platformio.local.ini` now has a `[voice_memo]` section mapped to compiler flags:
 

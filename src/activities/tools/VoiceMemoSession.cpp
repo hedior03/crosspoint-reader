@@ -94,8 +94,10 @@ bool VoiceMemoSession::begin() {
         static_cast<unsigned long>(VoiceMemoConfig::SAMPLE_RATE), 1.0, VoiceMemoConfig::ADPCM ? "ima_adpcm4" : "pcm16",
         VoiceMemoConfig::ADPCM ? VoiceMemoConfig::CODEC_BLOCK_BYTES : 2u,
         VoiceMemoConfig::ADPCM ? VoiceMemoConfig::CODEC_BLOCK_SAMPLES : 1u,
-        VoiceMemoConfig::FILTER_ENABLED ? "ellip_hp150_lp4500_v1" : "none", 0.0, CROSSPOINT_VERSION,
-        unsigned(VoiceMemoConfig::BLOCK_SAMPLES), unsigned(VoiceMemoConfig::BUFFER_BLOCKS));
+        VoiceMemoConfig::FILTER_ENABLED
+            ? (VoiceMemoConfig::SAMPLE_RATE == 24000 ? "owner_sos_24000_v1" : "ellip_hp150_lp4500_v1")
+            : "none",
+        0.0, CROSSPOINT_VERSION, unsigned(VoiceMemoConfig::BLOCK_SAMPLES), unsigned(VoiceMemoConfig::BUFFER_BLOCKS));
     if (length < 0 || static_cast<size_t>(length) >= sizeof(metricsBuffer)) {
       LOG_ERR("MEMO", "Session metadata exceeds buffer");
       return false;
