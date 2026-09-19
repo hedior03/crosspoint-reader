@@ -38,7 +38,7 @@ int main() {
   assert(counter.count == 0 && counter.totalUs == 0 && counter.maxUs == 0 && counter.bins[0] == 0);
 
   const size_t headerColumns = columnCount(VoiceMemoMetrics::csvHeader());
-  assert(headerColumns == 63);  // 5 base + 6 counters * 8 + 10 environment.
+  assert(headerColumns == 74);  // 5 base + 6 counters * 8 + 10 environment + 11 system.
 
   VoiceMemoMetrics idle;
   assert(idle.takeRow(1000000, false) == nullptr);
@@ -91,14 +91,60 @@ int main() {
   row = metrics.takeRow(9000000, true);
   assert(row && std::string(row).find(",,,,,,,,,,\n") != std::string::npos);
 
-  metrics.environment().batteryMv.store(3900);
-  metrics.environment().batteryPct.store(61);
-  metrics.environment().externalPower.store(1);
-  metrics.environment().internalFree.store(200000);
+  SystemMetrics::Snapshot system;
+  system.batteryMvKnown = system.batteryPercentKnown = system.externalPowerKnown = true;
+  system.batteryMv = 3900;
+  system.batteryPercent = 61;
+  system.externalPower = true;
+  system.internal.available = true;
+  system.internal.freeBytes = 200000;
   metrics.beginInterval(10000000);
   metrics.noteSamples(1);
-  row = metrics.takeRow(10000000, true);
+  row = metrics.takeRow(10000000, true, system);
   assert(row && std::string(row).find(",3900,61,1,200000,") != std::string::npos);
+
+  // Cached pre-session readings keep negative session-relative timestamps on every copy.
+  metrics.startSession(20000000);
+  system.coreCount = 2;
+  system.cores[0] = {19500000, 1000000, 0, true};
+  system.cores[1] = {19500010, 1000010, 10000, true};
+  system.frequencyKnown = system.memorySampled = system.batterySampled = true;
+  system.frequencyMhz = 80;
+  system.frequencyAtUs = 19500020;
+  system.memoryAtUs = 19500030;
+  system.batteryAtUs = 1000000;
+  row = metrics.takeRow(21000000, false, system);
+  const std::string suffix = ",2,0,10000,1000000,1000010,-500000,-499990,80,-499980,-499970,-19000000\n";
+  assert(row && std::string(row).ends_with(suffix));
+  row = metrics.takeRow(22000000, false, system);
+  assert(row && std::string(row).ends_with(suffix));
+  assert(columnCount(row) == 74);
+  system.cores[0].valid = system.cores[1].valid = false;
+  system.frequencyKnown = false;
+  row = metrics.takeRow(23000000, false, system);
+  assert(row && std::string(row).ends_with(",2,,,,,,,,,-499970,-19000000\n"));
+
+  // Full integer widths fit even when all histogram/count fields reach their type maxima.
+  // 5 base fields + 48 timing fields + 10 environment + 11 system, commas, LF and NUL.
+  const size_t worst = 2 * 20 + 2 * 10 + 5 + 4 + 6 * (6 * 10 + 2 * 20 + 8) + 10 * (10 + 1) + (3 + 1) + 2 * (5 + 1) +
+                       4 * (20 + 1) + (10 + 1) + 3 * (20 + 1) + 2;
+  assert(worst == VoiceMemoMetricsConfig::ROW_BOUND && worst == 1003);
+  assert(worst <= VoiceMemoMetricsConfig::ROW_MAX && worst <= VoiceMemoMetricsConfig::BATCH_BYTES);
+  metrics.startSession(0);
+  system.internal = system.psram = {UINT32_MAX, UINT32_MAX, UINT32_MAX, true};
+  system.frequencyKnown = true;
+  system.frequencyMhz = UINT32_MAX;
+  system.cores[0] = system.cores[1] = {INT64_MAX, UINT32_MAX, 10000, true};
+  system.frequencyAtUs = system.memoryAtUs = system.batteryAtUs = INT64_MAX;
+  metrics.addFilter(UINT64_MAX);
+  metrics.addEncode(UINT64_MAX);
+  metrics.addWrite(UINT64_MAX);
+  metrics.addBatch(UINT64_MAX);
+  metrics.addRollover(UINT64_MAX);
+  metrics.addDiag(UINT64_MAX);
+  metrics.noteSamples(UINT32_MAX);
+  row = metrics.takeRow(INT64_MAX, true, system);
+  assert(row && columnCount(row) == 74 && std::strlen(row) + 1 <= worst);
 
   std::puts(
       "Metrics checks passed: histogram edges, interval reset, delayed/missed intervals, partial flush and "

@@ -1,4 +1,5 @@
 """Exercise checker rejection and exact decoded merge lengths on host-generated sessions."""
+import csv
 import json
 from pathlib import Path
 import struct
@@ -11,6 +12,18 @@ import subprocess
 import shutil
 
 session, merged = map(Path, sys.argv[1:])
+with (session / "metrics-session/metrics.csv").open(newline="") as stream:
+    reader = csv.DictReader(stream)
+    rows = list(reader)
+    assert len(reader.fieldnames) == 74 and len(rows) == 2
+    assert [row["t_ms"] for row in rows] == ["1000", "3000"]
+    for row in rows:
+        assert None not in row and None not in row.values()
+        assert row["cpu_cores"] == "2" and row["cpu0_busy_bp"] == "1234"
+        assert row["cpu0_interval_us"] == "1000000" and row["cpu0_t_us"] == "500000"
+        assert row["cpu1_busy_bp"] == row["cpu1_interval_us"] == row["cpu1_t_us"] == ""
+        assert row["memory_t_us"] == "400000" and row["battery_t_us"] == "100000"
+        assert row["battery_mv"] == row["cpu_mhz"] == ""
 events = [json.loads(line) for line in (session / "session.jsonl").read_text().splitlines()]
 with wave.open(str(merged)) as audio:
     assert audio.getnframes() == sum(e["samples"] for e in events if e["event"] == "chunk")

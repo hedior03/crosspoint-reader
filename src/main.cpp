@@ -9,6 +9,7 @@
 #include <HalFrontlight.h>
 #include <HalGPIO.h>
 #include <HalMemory.h>
+#include <SystemMetrics.h>
 #if FREEINK_DEVICE_PAPERMONO
 #include <HalMicrophone.h>
 #endif
@@ -392,6 +393,7 @@ void setup() {
 
   halTiltSensor.begin();
   halClock.begin();
+  SystemMetrics::getInstance().begin();
 
 #if FREEINK_DEVICE_X4 || FREEINK_DEVICE_X3
   LOG_INF("MAIN", "Hardware detect: %s", gpio.deviceIsX3() ? "X3" : "X4");
@@ -584,6 +586,8 @@ void loop() {
   static unsigned long maxLoopDuration = 0;
   const unsigned long loopStartTime = millis();
   static unsigned long lastMemPrint = 0;
+
+  if (!deepSleepInProgress) SystemMetrics::getInstance().update();
 
   gpio.setSharedConfirmPowerShortPressEmitsPower(SETTINGS.shortPwrBtn == CrossPointSettings::SHORT_PWRBTN::SLEEP);
   mappedInputManager.update();

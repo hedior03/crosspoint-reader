@@ -1,15 +1,20 @@
 #pragma once
+#include <SystemMetrics.h>
+
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
 
 namespace VoiceMemoMetricsConfig {
-inline constexpr uint64_t INTERVAL_US = 1000000;            // Scheduled interval report length.
-inline constexpr size_t HISTOGRAM_BUCKETS = 5;              // <1ms, <10ms, <100ms, <1s, >=1s.
-inline constexpr size_t ROW_MAX = 512;                      // Bounds one formatted CSV row.
-inline constexpr size_t BATCH_BYTES = 2048;                 // Bounds rows buffered before one SD write.
-inline constexpr uint32_t BATCH_ROWS = 4;                   // Flush target while the audio backlog is empty.
-inline constexpr uint32_t ENVIRONMENT_INTERVAL_MS = 45000;  // Slow battery/memory sampling cadence.
+inline constexpr uint64_t INTERVAL_US = 1000000;      // Scheduled interval report length.
+inline constexpr size_t HISTOGRAM_BUCKETS = 5;        // <1ms, <10ms, <100ms, <1s, >=1s.
+inline constexpr size_t ROW_MAX = 1024;               // Bounds one formatted CSV row.
+inline constexpr size_t BATCH_BYTES = 2048;           // Bounds rows buffered before one SD write.
+inline constexpr uint32_t BATCH_ROWS = 4;             // Flush target while the audio backlog is empty.
+inline constexpr uint32_t STACK_INTERVAL_MS = 45000;  // Recorder task-stack sampling cadence.
+// Conservative decimal widths: base, six counters, ten environment fields, eleven new fields, LF/NUL.
+inline constexpr size_t ROW_BOUND = 69 + 6 * 108 + 10 * 11 + 174 + 2;
+static_assert(ROW_BOUND <= ROW_MAX && ROW_MAX <= BATCH_BYTES);
 }  // namespace VoiceMemoMetricsConfig
 
 // Writer-task-only timing accumulator: count, total, maximum and fixed latency buckets.
@@ -24,19 +29,11 @@ struct VoiceMemoCounter {
 };
 
 // One-second interval accumulator. Timing counters reset each time a row is taken; the
-// environment snapshot is refreshed by the main task and read here through atomics.
+// task-stack headroom is refreshed by the main task while handles remain valid.
 // Negative environment values mean "unknown", never zero.
 class VoiceMemoMetrics {
  public:
   struct Environment {
-    std::atomic<int32_t> batteryMv{-1};
-    std::atomic<int32_t> batteryPct{-1};
-    std::atomic<int32_t> externalPower{-1};  // 0/1 known, -1 unknown.
-    std::atomic<int32_t> internalFree{-1};
-    std::atomic<int32_t> internalMin{-1};
-    std::atomic<int32_t> internalLargest{-1};
-    std::atomic<int32_t> psramFree{-1};
-    std::atomic<int32_t> psramMin{-1};
     std::atomic<int32_t> writerStackFree{-1};
     std::atomic<int32_t> captureStackFree{-1};
   };
@@ -56,7 +53,7 @@ class VoiceMemoMetrics {
 
   // Formats a due interval into the internal row buffer. Returns nullptr when no row is
   // due; `final` flushes the remaining partial interval at drain/Pause/Stop.
-  const char* takeRow(uint64_t nowUs, bool final);
+  const char* takeRow(uint64_t nowUs, bool final, const SystemMetrics::Snapshot& system = {});
 
   Environment& environment() { return environment_; }
   static const char* csvHeader();

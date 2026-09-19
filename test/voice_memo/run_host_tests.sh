@@ -14,7 +14,7 @@ for rate in 16000 24000; do
   uv run --script test/voice_memo/check_filter.py "$test_dir/input.f32" "$test_dir/output.f32" "$preset"
 done
 c++ -std=c++20 -Wall -Wextra -Werror -fsanitize=address,undefined \
-  test/voice_memo/MetricsTest.cpp src/activities/tools/VoiceMemoMetrics.cpp -o "$test_dir/metrics"
+  -Ilib/SystemMetrics test/voice_memo/MetricsTest.cpp src/activities/tools/VoiceMemoMetrics.cpp -o "$test_dir/metrics"
 "$test_dir/metrics"
 for source in adpcm-lib adpcm-dns; do
   cc -std=c99 -fsanitize=address,undefined -c "lib/AdpcmXq/$source.c" -o "$test_dir/$source.o"
@@ -26,7 +26,7 @@ for format in pcm adpcm; do
   flags=()
   if [[ "$format" == pcm ]]; then flags+=(-DVOICE_MEMO_PCM_BASELINE); fi
   c++ "${flags[@]}" -std=c++20 -Wall -Wextra -Werror -fsanitize=address,undefined \
-    -Itest/voice_memo/stubs -Ilib/Memory -Ilib/AdpcmXq \
+    -Ilib/SystemMetrics -Itest/voice_memo/stubs -Ilib/Memory -Ilib/AdpcmXq \
     test/voice_memo/SessionTest.cpp src/activities/tools/VoiceMemoSession.cpp \
     src/activities/tools/VoiceMemoMetrics.cpp \
     "$test_dir/adpcm-lib.o" "$test_dir/adpcm-dns.o" -o "$test_dir/session"

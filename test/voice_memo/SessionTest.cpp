@@ -234,11 +234,17 @@ int main(int argc, char** argv) {
   measured.setMetrics(&metrics);
   assert(measured.begin());
   assert(measured.openMetrics() && measured.metricsOpen());
+  SystemMetrics::Snapshot system;
+  system.coreCount = 2;
+  system.cores[0] = {500000, 1000000, 1234, true};
+  system.memorySampled = system.batterySampled = true;
+  system.memoryAtUs = 400000;
+  system.batteryAtUs = 100000;
   metrics.startSession(0);
   metrics.beginInterval(0);
   metrics.noteSamples(CODEC_BLOCK_SAMPLES);
   metrics.addWrite(1200);
-  const char* metricsRow = metrics.takeRow(1000000, false);
+  const char* metricsRow = metrics.takeRow(1000000, false, system);
   assert(metricsRow && measured.appendMetrics(metricsRow));
   assert(measured.pendingMetricsRows() == 1);
   assert(measured.event("pause"));
@@ -246,7 +252,7 @@ int main(int argc, char** argv) {
   metrics.beginInterval(2000000);
   metrics.noteSamples(CODEC_BLOCK_SAMPLES);
   metrics.addWrite(1300);
-  metricsRow = metrics.takeRow(3000000, false);
+  metricsRow = metrics.takeRow(3000000, false, system);
   assert(metricsRow && measured.appendMetrics(metricsRow));
   assert(measured.pendingMetricsRows() == 2);
   assert(measured.event("resume", 500));
@@ -259,6 +265,8 @@ int main(int argc, char** argv) {
   assert(csv.rfind(VoiceMemoMetrics::csvHeader(), 0) == 0);
   assert(csv.find("\n1000,1000,0," + std::to_string(CODEC_BLOCK_SAMPLES) + ",0,") != std::string::npos);
   assert(csv.find("\n3000,1000,0," + std::to_string(CODEC_BLOCK_SAMPLES) + ",0,") != std::string::npos);
+
+  if (argc == 2) exportSession((std::string(argv[1]) + "/metrics-session").c_str());
 
   // A failing diagnostic write drops rows but leaves audio finalization intact.
   fake::reset();

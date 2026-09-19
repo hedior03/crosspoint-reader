@@ -36,7 +36,8 @@ Shared C++ defaults: 16 kHz mono16, IMA ADPCM, selected 150–4500 Hz filter ena
 The supplied SOS coefficients remain unchanged: the original preset is for 16 kHz; the additional
 [24 kHz preset](audio-presets/voice-owner-24000.json) is selected for filtered 24 kHz builds.
 
-The gitignored `platformio.local.ini` now has a `[voice_memo]` section mapped to compiler flags:
+The original gitignored `platformio.local.ini` trial used these `[voice_memo]` settings.
+The current shared setup is now committed in `platformio.papermono.ini` (see the integration note below):
 
 ```ini
 format = Pcm16
@@ -137,7 +138,7 @@ sessions stays in the version-3 `session.jsonl` start event: `sample_rate`, `for
 framework, task or queue: the existing writer task folds its own timings, formats a row, and appends it to a
 bounded buffer that is flushed through HalStorage.
 
-Columns (63, comma separated, one header row written once):
+Columns (74, comma separated, one header row written once):
 
 - `t_ms` — milliseconds since session start (monotonic `esp_timer`, not wall clock).
 - `elapsed_ms` — actual duration covered by this row.
@@ -156,16 +157,33 @@ Columns (63, comma separated, one header row written once):
 - Buckets are `<1ms`, `<10ms`, `<100ms`, `<1s`, `>=1s`. They give approximate p90/p99 ranges and occupancy,
   not exact percentiles. Count plus total gives a mean.
 - `battery_mv`, `battery_pct`, `external_power` (0/1), sampled on the main task every
-  `ENVIRONMENT_INTERVAL_MS` (45 s) through `HalPowerManager::getBatteryStatus`.
+  SystemMetrics (45 s) through `HalPowerManager::getBatteryStatus`. The writer only copies the cache.
 - `heap_internal_free`, `heap_internal_min`, `heap_internal_largest`, `psram_free`, `psram_min` in bytes,
-  internal RAM and PSRAM separately (PSRAM unavailable is empty).
+  internal RAM and PSRAM separately (unavailable heaps are empty). SystemMetrics samples these every second;
+  minima are allocator lifetime minima, not recording/row minima. The global snapshot also exposes PSRAM largest block.
 - `writer_stack_free`, `capture_stack_free` — FreeRTOS stack high-water marks in bytes; smaller means less
-  headroom. Sampled with the environment.
+  headroom. Sampled by the activity every `STACK_INTERVAL_MS` (45 s), only while task handles exist.
+- Appended system fields (the original 63 columns retain their order and units):
+  `cpu_cores`; `cpu0_busy_bp`, `cpu1_busy_bp` (0..10000 basis points, 10000 = 100%);
+  `cpu0_interval_us`, `cpu1_interval_us` (each core's actual measurement interval);
+  `cpu0_t_us`, `cpu1_t_us`; `cpu_mhz` (instantaneous frequency, not interval average);
+  `cpu_frequency_t_us`, `memory_t_us`, `battery_t_us`.
+- Every appended `*_t_us` is signed microseconds relative to the same session start as `t_ms`.
+  Cached measurements before Record have negative timestamps; Resume does not change the origin.
+  Repeated rows can retain identical timestamps. At row time, approximate age in microseconds is
+  `t_ms * 1000 - group_t_us` (the row timestamp has millisecond resolution).
+  CPU timestamps/intervals are empty when utilization is invalid; frequency remains independently available.
+  Memory/battery timestamps identify the completed attempt, including failures; availability comes from
+  each value's empty field. A failed battery attempt clears affected values rather than refreshing old data.
 - An empty field means unknown/unavailable, never zero.
 
 Flushing policy: rows are appended to a fixed `BATCH_BYTES` (2048) buffer. The writer flushes at
 `BATCH_ROWS` (4) rows when the filled-block queue is empty, at Pause/Stop drain, and when a row would
-overflow the buffer. A failed flush drops the buffered rows, is logged once, and never changes the audio
+overflow the buffer. Four rows are a target, not a guarantee: the byte limit can flush earlier.
+`ROW_MAX` is 1024 bytes including NUL. A conservative full-width decimal bound is 1003 bytes:
+69 base + 6 × 108 timing + 110 environment + 174 appended system + 2 LF/NUL. The unchanged
+2048-byte batch can hold a complete row; compile-time and host checks enforce these bounds.
+A failed flush drops the buffered rows, is logged once, and never changes the audio
 result. Here “flush” means writing the RAM batch through HalFile, not calling `HalFile::flush()` to sync
 filesystem state. Pause writes pending rows but keeps the handle open; Stop/exit closes it. Power loss before
 close can lose access to the session's metrics, not just the latest RAM batch. `metrics.csv` is opened with
@@ -202,3 +220,14 @@ several rollovers and Pause/Resume/Stop/exit, then copy the whole session and co
 - Slow-storage/backlog behavior shows missed intervals in `missed` rather than stalled capture.
 - Battery runs record `external_power` and use consistent frontlight/radio conditions; unplugged runs give
   discharge trends.
+
+## Shared sampler integration (2026-09-18)
+
+See [SystemMetrics implementation and SDK evidence](papermono-system-metrics-plan.md#implementation-evidence-and-limits).
+Main-task sampling continues during Pause, overlays and after recorder exit. The writer copies a consistent
+cached system snapshot before formatting each candidate report; sampling never occurs in the writer or capture.
+Task-stack polling and worker teardown remain activity-owned. The audio pipeline, supplied filter coefficients,
+recorder counters, overflow-write policy, sync/close behavior and accepted diagnostic-loss gaps above are unchanged.
+The committed `platformio.papermono.ini` settings are 24 kHz filtered IMA ADPCM, 1024 × 16 buffers,
+300-second chunks (experiment E). Machine-specific overrides remain in ignored `platformio.local.ini`.
+This is a configuration observation, not a device/session-number verification.

@@ -28,12 +28,23 @@ void appendCounter(char* row, size_t rowSize, size_t& used, const VoiceMemoCount
          static_cast<unsigned>(counter.bins[4]));
 }
 
-void appendEnvironment(char* row, size_t rowSize, size_t& used, const std::atomic<int32_t>& value) {
-  const int32_t current = value.load(std::memory_order_relaxed);
-  if (current < 0)
-    append(row, rowSize, used, ",");
+void appendValue(char* row, size_t rowSize, size_t& used, bool known, uint64_t value) {
+  if (known)
+    append(row, rowSize, used, ",%llu", static_cast<unsigned long long>(value));
   else
-    append(row, rowSize, used, ",%ld", static_cast<long>(current));
+    append(row, rowSize, used, ",");
+}
+
+void appendTime(char* row, size_t rowSize, size_t& used, bool sampled, uint64_t atUs, uint64_t startUs) {
+  if (sampled)
+    append(row, rowSize, used, ",%lld", static_cast<long long>(atUs) - static_cast<long long>(startUs));
+  else
+    append(row, rowSize, used, ",");
+}
+
+void appendStack(char* row, size_t rowSize, size_t& used, const std::atomic<int32_t>& value) {
+  const int32_t current = value.load(std::memory_order_relaxed);
+  appendValue(row, rowSize, used, current >= 0, current);
 }
 }  // namespace
 
@@ -91,7 +102,7 @@ void VoiceMemoMetrics::resetActive() {
   samples_ = 0;
 }
 
-const char* VoiceMemoMetrics::takeRow(uint64_t nowUs, bool final) {
+const char* VoiceMemoMetrics::takeRow(uint64_t nowUs, bool final, const SystemMetrics::Snapshot& system) {
   if (!active_) return nullptr;
   const uint64_t elapsed = nowUs - intervalStartUs_;
   if (!final && elapsed < cfg::INTERVAL_US) return nullptr;
@@ -112,16 +123,25 @@ const char* VoiceMemoMetrics::takeRow(uint64_t nowUs, bool final) {
   appendCounter(row_, sizeof(row_), used, batch_);
   appendCounter(row_, sizeof(row_), used, rollover_);
   appendCounter(row_, sizeof(row_), used, diag_);
-  appendEnvironment(row_, sizeof(row_), used, environment_.batteryMv);
-  appendEnvironment(row_, sizeof(row_), used, environment_.batteryPct);
-  appendEnvironment(row_, sizeof(row_), used, environment_.externalPower);
-  appendEnvironment(row_, sizeof(row_), used, environment_.internalFree);
-  appendEnvironment(row_, sizeof(row_), used, environment_.internalMin);
-  appendEnvironment(row_, sizeof(row_), used, environment_.internalLargest);
-  appendEnvironment(row_, sizeof(row_), used, environment_.psramFree);
-  appendEnvironment(row_, sizeof(row_), used, environment_.psramMin);
-  appendEnvironment(row_, sizeof(row_), used, environment_.writerStackFree);
-  appendEnvironment(row_, sizeof(row_), used, environment_.captureStackFree);
+  appendValue(row_, sizeof(row_), used, system.batteryMvKnown, system.batteryMv);
+  appendValue(row_, sizeof(row_), used, system.batteryPercentKnown, system.batteryPercent);
+  appendValue(row_, sizeof(row_), used, system.externalPowerKnown, system.externalPower);
+  appendValue(row_, sizeof(row_), used, system.internal.available, system.internal.freeBytes);
+  appendValue(row_, sizeof(row_), used, system.internal.available, system.internal.minFreeBytes);
+  appendValue(row_, sizeof(row_), used, system.internal.available, system.internal.largestBlockBytes);
+  appendValue(row_, sizeof(row_), used, system.psram.available, system.psram.freeBytes);
+  appendValue(row_, sizeof(row_), used, system.psram.available, system.psram.minFreeBytes);
+  appendStack(row_, sizeof(row_), used, environment_.writerStackFree);
+  appendStack(row_, sizeof(row_), used, environment_.captureStackFree);
+  appendValue(row_, sizeof(row_), used, system.coreCount != 0, system.coreCount);
+  for (const auto& core : system.cores) appendValue(row_, sizeof(row_), used, core.valid, core.busyBasisPoints);
+  for (const auto& core : system.cores) appendValue(row_, sizeof(row_), used, core.valid, core.intervalUs);
+  for (const auto& core : system.cores)
+    appendTime(row_, sizeof(row_), used, core.valid, core.sampledAtUs, sessionStartUs_);
+  appendValue(row_, sizeof(row_), used, system.frequencyKnown, system.frequencyMhz);
+  appendTime(row_, sizeof(row_), used, system.frequencyKnown, system.frequencyAtUs, sessionStartUs_);
+  appendTime(row_, sizeof(row_), used, system.memorySampled, system.memoryAtUs, sessionStartUs_);
+  appendTime(row_, sizeof(row_), used, system.batterySampled, system.batteryAtUs, sessionStartUs_);
 
   intervalStartUs_ = nowUs;
   const bool truncated = used + 1 >= sizeof(row_);
@@ -142,5 +162,7 @@ const char* VoiceMemoMetrics::csvHeader() {
          "diag_n,diag_us,diag_max_us,diag_b0,diag_b1,diag_b2,diag_b3,diag_b4,"
          "battery_mv,battery_pct,external_power,"
          "heap_internal_free,heap_internal_min,heap_internal_largest,"
-         "psram_free,psram_min,writer_stack_free,capture_stack_free\n";
+         "psram_free,psram_min,writer_stack_free,capture_stack_free,"
+         "cpu_cores,cpu0_busy_bp,cpu1_busy_bp,cpu0_interval_us,cpu1_interval_us,cpu0_t_us,cpu1_t_us,"
+         "cpu_mhz,cpu_frequency_t_us,memory_t_us,battery_t_us\n";
 }

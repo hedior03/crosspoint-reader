@@ -39,7 +39,7 @@ class VoiceMemoActivity final : public Activity, private UiAppHost {
   void capture();
   void write();
   void pollMetrics(bool final);
-  void sampleEnvironment();
+  void sampleTaskStacks();
   void finishWorkers();
   void releaseBuffers();
   void fail(Error reason);
@@ -67,7 +67,7 @@ class VoiceMemoActivity final : public Activity, private UiAppHost {
   uint32_t peak = 0;
   uint32_t highWater = 0;
   uint32_t displayedChunk = 0;
-  uint32_t nextEnvironmentMs = 0;
+  uint32_t nextStackSampleMs = 0;
   bool metricsLossReported = false;
 };
 #endif

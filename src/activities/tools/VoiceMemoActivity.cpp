@@ -1,9 +1,9 @@
 #include "VoiceMemoActivity.h"
 #if FREEINK_DEVICE_PAPERMONO
-#include <HalMemory.h>
 #include <HalPowerManager.h>
 #include <I18n.h>
 #include <Memory.h>
+#include <SystemMetrics.h>
 #include <esp_memory_utils.h>
 #include <esp_timer.h>
 
@@ -94,7 +94,7 @@ void VoiceMemoActivity::startRecording(bool resume) {
         telemetry.startSession(esp_timer_get_time());
       else
         telemetry.beginInterval(esp_timer_get_time());
-      nextEnvironmentMs = millis();  // Sample power/memory once as soon as the loop runs.
+      nextStackSampleMs = millis();  // Sample task stacks once as soon as the loop runs.
       captureDone = writerDone = false;
       // Writer may block on SD; capture has higher priority and blocks only on audio/free buffers.
       if (xTaskCreate([](void* p) { static_cast<VoiceMemoActivity*>(p)->write(); }, "MemoWrite",
@@ -241,7 +241,8 @@ void VoiceMemoActivity::write() {
 }
 
 void VoiceMemoActivity::pollMetrics(bool final) {
-  const char* row = telemetry.takeRow(esp_timer_get_time(), final);
+  const auto system = SystemMetrics::getInstance().snapshot();
+  const char* row = telemetry.takeRow(esp_timer_get_time(), final, system);
   if (!row || !session.metricsOpen()) return;
   if (!session.appendMetrics(row) && !metricsLossReported) {
     LOG_ERR("MEMO", "Telemetry rows dropped; audio unaffected");
@@ -252,21 +253,8 @@ void VoiceMemoActivity::pollMetrics(bool final) {
   }
 }
 
-void VoiceMemoActivity::sampleEnvironment() {
+void VoiceMemoActivity::sampleTaskStacks() {
   auto& environment = telemetry.environment();
-  const auto battery = powerManager.getBatteryStatus();
-  environment.batteryMv.store(battery.millivoltsKnown ? static_cast<int32_t>(battery.millivolts) : -1);
-  environment.batteryPct.store(battery.percentageKnown ? static_cast<int32_t>(battery.percentage) : -1);
-  environment.externalPower.store(battery.externalPowerKnown ? (battery.externalPower ? 1 : 0) : -1);
-  const auto internal = HalMemory::getInternalHeap();
-  const auto psram = HalMemory::getPsramHeap();
-  environment.internalFree.store(static_cast<int32_t>(std::min<size_t>(internal.freeBytes, INT32_MAX)));
-  environment.internalMin.store(static_cast<int32_t>(std::min<size_t>(internal.minFreeBytes, INT32_MAX)));
-  environment.internalLargest.store(static_cast<int32_t>(std::min<size_t>(internal.largestBlockBytes, INT32_MAX)));
-  environment.psramFree.store(psram.totalBytes ? static_cast<int32_t>(std::min<size_t>(psram.freeBytes, INT32_MAX))
-                                               : -1);
-  environment.psramMin.store(psram.totalBytes ? static_cast<int32_t>(std::min<size_t>(psram.minFreeBytes, INT32_MAX))
-                                              : -1);
   environment.writerStackFree.store(writerTask ? static_cast<int32_t>(uxTaskGetStackHighWaterMark(writerTask)) : -1);
   environment.captureStackFree.store(captureTask ? static_cast<int32_t>(uxTaskGetStackHighWaterMark(captureTask)) : -1);
 }
@@ -313,9 +301,9 @@ void VoiceMemoActivity::onExit() {
 }
 
 void VoiceMemoActivity::loop() {
-  if ((captureTask || writerTask) && int32_t(millis() - nextEnvironmentMs) >= 0) {
-    sampleEnvironment();
-    nextEnvironmentMs = millis() + VoiceMemoMetricsConfig::ENVIRONMENT_INTERVAL_MS;
+  if ((captureTask || writerTask) && int32_t(millis() - nextStackSampleMs) >= 0) {
+    sampleTaskStacks();
+    nextStackSampleMs = millis() + VoiceMemoMetricsConfig::STACK_INTERVAL_MS;
   }
   if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
     pauseRequested = false;
